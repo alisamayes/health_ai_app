@@ -1,7 +1,7 @@
 import sys
 import sqlite3
 from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtGui import QPixmap, QFont
+from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -82,7 +82,25 @@ class CalorieTracker(QWidget):
         super().__init__()
         self.layout = QVBoxLayout()
 
-        # Input fields
+        # Date selector section for picking which date to show calorie and food entries for
+        self.date_selector = QDateEdit(calendarPopup=True)
+        self.date_selector.setDate(QDate.currentDate())
+        self.date_selector.dateChanged.connect(self.load_entries)
+        self.back_day_button = QPushButton("<")
+        self.back_day_button.setFixedSize(30, 25)
+        self.back_day_button.clicked.connect(self.back_day)
+        self.next_day_button = QPushButton(">")
+        self.next_day_button.setFixedSize(30, 25)
+        self.next_day_button.clicked.connect(self.next_day)
+
+        date_layout = QHBoxLayout()
+        date_layout.addWidget(QLabel("Select Date:"))
+        date_layout.addWidget(self.back_day_button)
+        date_layout.addWidget(self.date_selector)
+        date_layout.addWidget(self.next_day_button)
+
+
+        # Input section for adding and removing food and calorie entries
         self.food_input = QLineEdit()
         self.food_input.setPlaceholderText("Enter food name")
         self.calorie_input = QLineEdit()
@@ -99,38 +117,27 @@ class CalorieTracker(QWidget):
         input_layout.addWidget(self.add_button)
         input_layout.addWidget(self.remove_button)
 
-        # Date selector (for viewing and adding entries)
-        self.date_selector = QDateEdit(calendarPopup=True)
-        self.date_selector.setDate(QDate.currentDate())
-        self.date_selector.dateChanged.connect(self.load_entries)
+       
 
-        date_layout = QHBoxLayout()
-        date_layout.addWidget(QLabel("Select Date:"))
-        date_layout.addWidget(self.date_selector)
-
-        # Table to show entries
+        # Table section to show entries for a given date
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Food", "Calories"])
         
         # Enable automatic column resizing to fit content
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(0, self.table.horizontalHeader().ResizeMode.Stretch)  # Food column stretches
-        self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.ResizeToContents)  # Calories column fits content
-        
-        # Enable word wrapping for long food names
-        self.table.setWordWrap(True)
-        
-        # Set minimum column widths
-        self.table.setColumnWidth(1, 80)  # Calories column minimum width
+        self.table.horizontalHeader().setSectionResizeMode(0, self.table.horizontalHeader().ResizeMode.Stretch) 
+        self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.ResizeToContents) 
+        self.table.setWordWrap(True) # Enable word wrapping for long food names
+        self.table.setColumnWidth(1, 80) # Set minimum column widths
 
-        # Total daily calorie intake
+        # Section for showing total daily calorie intake for a given date
         self.calorie_label = QLabel("Daily Calories:")
         self.calorie_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
 
         # Add to layout
-        self.layout.addLayout(input_layout)
         self.layout.addLayout(date_layout)
+        self.layout.addLayout(input_layout)
         self.layout.addWidget(self.table)
         self.layout.addWidget(self.calorie_label)
         self.setLayout(self.layout)
@@ -194,6 +201,14 @@ class CalorieTracker(QWidget):
 
         self.load_entries()
 
+    def back_day(self):
+        self.date_selector.setDate(self.date_selector.date().addDays(-1))
+        self.load_entries()
+    
+    def next_day(self):
+        self.date_selector.setDate(self.date_selector.date().addDays(1))
+        self.load_entries()
+
     def load_entries(self):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
@@ -221,7 +236,7 @@ class HealthApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Health Tracker App")
-        self.setGeometry(200, 200, 600, 400)
+        self.setGeometry(300, 300, 750, 400)
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -240,6 +255,7 @@ class HealthApp(QMainWindow):
 if __name__ == "__main__":
     init_db()
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("assets/legendary_boop.png"))
     window = HealthApp()
     window.show()
     sys.exit(app.exec())

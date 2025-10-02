@@ -1,4 +1,5 @@
 import sys
+import os
 import sqlite3
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QPixmap, QFont, QIcon
@@ -88,9 +89,11 @@ class CalorieTracker(QWidget):
         self.date_selector.dateChanged.connect(self.load_entries)
         self.back_day_button = QPushButton("<")
         self.back_day_button.setFixedSize(30, 25)
+        self.back_day_button.setObjectName("navigationBtn") # Navigation buttons are smaller than the other buttons in the styling to fit the < and > symbols. Thus needs a special identifier.
         self.back_day_button.clicked.connect(self.back_day)
         self.next_day_button = QPushButton(">")
         self.next_day_button.setFixedSize(30, 25)
+        self.next_day_button.setObjectName("navigationBtn")
         self.next_day_button.clicked.connect(self.next_day)
 
         date_layout = QHBoxLayout()
@@ -236,7 +239,131 @@ class HealthApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Health Tracker App")
-        self.setGeometry(300, 300, 750, 400)
+        self.setGeometry(300, 300, 800, 400)
+        # Prefer an .ico for Windows taskbar; fallback to PNG if .ico not present
+        icon_path_ico = os.path.join("assets", "legendary_boop.ico")
+        icon_path_png = os.path.join("assets", "legendary_boop.png")
+        window_icon = QIcon(icon_path_ico) if os.path.exists(icon_path_ico) else QIcon(icon_path_png)
+        self.setWindowIcon(window_icon)
+        
+        # Apply dark theme styling
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QTabWidget::pane {
+                border: 1px solid #404040;
+                background-color: #2b2b2b;
+                border-radius: 8px;
+            }
+            QTabWidget::tab-bar {
+                alignment: center;
+            }
+            QTabBar::tab {
+                background-color: #404040;
+                color: #ffffff;
+                padding: 8px 16px;
+                margin: 2px;
+                border-radius: 6px;
+                border: none;
+            }
+            QTabBar::tab:selected {
+                background-color: #5a5a5a;
+            }
+            QTabBar::tab:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton {
+                background-color: #404040;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton#navigationBtn {
+                padding: 2px 6px;
+                min-width: 0px; /* smaller padding for  the < and > buttons which were getting cut off due to not enough space */
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton:pressed {
+                background-color: #6a6a6a;
+            }
+            QLineEdit {
+                background-color: #3a3a3a;
+                color: #ffffff;
+                border: 2px solid #404040;
+                padding: 8px;
+                border-radius: 6px;
+            }
+            QLineEdit:focus {
+                border-color: #0078d4;
+            }
+            QDateEdit {
+                background-color: #3a3a3a;
+                color: #ffffff;
+                border: 2px solid #404040;
+                padding: 8px;
+                border-radius: 6px;
+            }
+            QDateEdit:focus {
+                border-color: #0078d4;
+            }
+            QTableWidget {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 2px solid #404040;
+                border-radius: 8px;
+                gridline-color: #404040;
+                selection-background-color: #0078d4;
+                alternate-background-color: #3a3a3a;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #404040;
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QTableWidget::item:selected {
+                background-color: #0078d4;
+                color: #ffffff;
+            }
+            QTableWidget::item:alternate {
+                background-color: #3a3a3a;
+            }
+            QHeaderView {
+                background-color: #404040;
+                color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: #404040 !important;
+                color: #ffffff !important;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+                border-radius: 0px;
+            }
+            QHeaderView::section:horizontal {
+                border-right: 1px solid #5a5a5a;
+                background-color: #404040 !important;
+                color: #ffffff !important;
+            }
+            QHeaderView::section:vertical {
+                border-bottom: 1px solid #5a5a5a;
+                background-color: #404040 !important;
+                color: #ffffff !important;
+            }
+            QTableCornerButton::section {
+                background-color: #404040 !important;
+                border: none;
+            }
+            QLabel {
+                color: #ffffff;
+            }
+        """)
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -254,8 +381,18 @@ class HealthApp(QMainWindow):
 # --- Run App ---
 if __name__ == "__main__":
     init_db()
+    # Ensure proper taskbar icon on Windows by setting AppUserModelID before creating windows
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MindfulMauschen.HealthApp.1.0")
+        except Exception:
+            pass
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon("assets/legendary_boop.png"))
+    icon_path_ico = os.path.join("assets", "legendary_boop.ico")
+    icon_path_png = os.path.join("assets", "legendary_boop.png")
+    app_icon = QIcon(icon_path_ico) if os.path.exists(icon_path_ico) else QIcon(icon_path_png)
+    app.setWindowIcon(app_icon)
     window = HealthApp()
     window.show()
     sys.exit(app.exec())

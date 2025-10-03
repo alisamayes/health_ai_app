@@ -1,13 +1,17 @@
 import sys
 import os
 import sqlite3
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit
+    QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox
 )
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 """
 This is the starter file for an AI-driven self health and tracking app I am working on, using Python for the main part, PyQt for the GUI and SQLite for the database
@@ -86,6 +90,7 @@ class CalorieTracker(QWidget):
         # Date selector section for picking which date to show calorie and food entries for
         self.date_selector = QDateEdit(calendarPopup=True)
         self.date_selector.setDate(QDate.currentDate())
+        self.date_selector.setDisplayFormat("dd-MM-yyyy")
         self.date_selector.dateChanged.connect(self.load_entries)
         self.back_day_button = QPushButton("<")
         self.back_day_button.setFixedSize(30, 25)
@@ -231,8 +236,180 @@ class CalorieTracker(QWidget):
 
         # Update total calories label
         total_calories = sum(row[1] for row in rows) if rows else 0
-        self.calorie_label.setText(f"Daily Calories: {total_calories}")
+        selected_date_display = self.date_selector.date().toString("dd-MM-yyyy")
+        self.calorie_label.setText(f"Daily Calories ({selected_date_display}): {total_calories}")
 
+class Graphs(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # Timeframe selection
+        self.timeframe_selector = QComboBox()
+        self.timeframe_selector.addItems(["1 Week", "2 Weeks", "1 Month", "3 Months", "1 Year", "Full History"])
+        self.timeframe_selector.currentTextChanged.connect(self.load_graphs)
+
+        # Navigation buttons
+        self.back_button = QPushButton("<")
+        self.back_button.setFixedSize(30, 25)
+        self.back_button.setObjectName("navigationBtn") # Navigation buttons are smaller than the other buttons in the styling to fit the < and > symbols. Thus needs a special identifier.
+        self.back_button.clicked.connect(self.back)
+        self.next_button = QPushButton(">")
+        self.next_button.setFixedSize(30, 25)
+        self.next_button.setObjectName("navigationBtn")
+        self.next_button.clicked.connect(self.next)
+        
+        # Layout box for the timeframe naivgation
+        timeframe_layout = QHBoxLayout()
+        timeframe_layout.addWidget(self.back_button)
+        timeframe_layout.addWidget(self.timeframe_selector)
+        timeframe_layout.addWidget(self.next_button)
+        self.layout.addLayout(timeframe_layout)
+
+        # Matplotlib canvas
+        self.canvas = FigureCanvas(Figure(figsize=(6, 3), dpi=100))
+        self.graph = self.canvas.figure.add_subplot(111)
+
+        self.layout.addWidget(self.canvas)
+
+        # Ensure canvas/figure/axes respect dark theme colors (Qt stylesheets do not style Matplotlib)
+        dark_bg = "#2b2b2b"
+        light_fg = "#ffffff"
+        grid_color = "#5a5a5a"
+        try:
+            self.canvas.setStyleSheet(f"background-color: {dark_bg};")
+            self.canvas.figure.set_facecolor(dark_bg)
+            self.graph.set_facecolor(dark_bg)
+            for spine in self.graph.spines.values():
+                spine.set_color(grid_color)
+            self.graph.tick_params(colors=light_fg)
+            self.graph.title.set_color(light_fg)
+            self.graph.xaxis.label.set_color(light_fg)
+            self.graph.yaxis.label.set_color(light_fg)
+        except Exception:
+            pass
+
+        # Initial load
+        self.load_graphs()
+
+    def get_date_range(self, timeframe_label: str):
+        # Find earliest entry_date in the database. The start date will not be earlier than this.
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("SELECT MIN(entry_date) FROM calories")
+        earliest_row = c.fetchone()
+        conn.close()
+        earliest_qdate = QDate.fromString(earliest_row[0], "yyyy-MM-dd") if earliest_row and earliest_row[0] else None
+
+        end_qdate = QDate.currentDate() # End date is the current date.
+        if timeframe_label == "1 Week":
+            start_qdate = end_qdate.addDays(-6)
+        elif timeframe_label == "2 Weeks":
+            start_qdate = end_qdate.addDays(-13)
+        elif timeframe_label == "1 Month":
+            start_qdate = end_qdate.addMonths(-1).addDays(1)
+        elif timeframe_label == "3 Months":
+            start_qdate = end_qdate.addMonths(-3).addDays(1)
+        elif timeframe_label == "1 Year":
+            start_qdate = end_qdate.addYears(-1).addDays(1)
+        elif timeframe_label == "Full History": # First entry in the database to the current date.
+            return None, end_qdate.toString("yyyy-MM-dd")
+        else:
+            start_qdate = end_qdate.addDays(-6)
+
+        # If earliest date and start date < earliest date, it means we dont have entries goign that far back and so just keep the range within the bounds of known data.
+        if earliest_qdate and start_qdate < earliest_qdate:
+            start_qdate = earliest_qdate
+
+        return start_qdate.toString("yyyy-MM-dd"), end_qdate.toString("yyyy-MM-dd")
+
+    def back(self):
+        current_index = self.timeframe_selector.currentIndex()
+        if current_index > 0:
+            self.timeframe_selector.setCurrentIndex(current_index - 1)
+
+
+    def next(self):
+        current_index = self.timeframe_selector.currentIndex()
+        last_index = self.timeframe_selector.count() - 1
+        if current_index < last_index:
+            self.timeframe_selector.setCurrentIndex(current_index + 1)
+
+    def load_graphs(self):
+        timeframe = self.timeframe_selector.currentText()
+        start_str, end_str = self.get_date_range(timeframe)
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        if start_str is None:
+            c.execute(
+                """
+                SELECT entry_date, SUM(calories) AS total
+                FROM calories
+                GROUP BY entry_date
+                ORDER BY entry_date ASC
+                """
+            )
+        else:
+            c.execute(
+                """
+                SELECT entry_date, SUM(calories) AS total
+                FROM calories
+                WHERE entry_date BETWEEN ? AND ?
+                GROUP BY entry_date
+                ORDER BY entry_date ASC
+                """,
+                (start_str, end_str),
+            )
+        rows = c.fetchall()
+        conn.close()
+
+        # Build a continuous date range and fill missing days with zero
+        date_to_total = {r[0]: r[1] for r in rows}
+        if start_str is None:
+            if rows:
+                start_date = datetime.strptime(rows[0][0], "%Y-%m-%d").date()
+                end_date = datetime.strptime(rows[-1][0], "%Y-%m-%d").date()
+            else:
+                start_date = datetime.today().date()
+                end_date = start_date
+        else:
+            start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
+
+        dates = []
+        totals = []
+        current = start_date
+        while current <= end_date:
+            key = current.strftime("%Y-%m-%d")
+            dates.append(key)
+            totals.append(date_to_total.get(key, 0))
+            current += timedelta(days=1)
+
+        # Prepare display labels in dd-MM-yyyy
+        display_dates = [datetime.strptime(d, "%Y-%m-%d").strftime("%d-%m-%Y") for d in dates]
+
+        self.graph.clear()
+        if dates:
+            self.graph.plot(dates, totals, marker='o', color='#56b4e9', linewidth=2)
+            self.graph.fill_between(range(len(totals)), totals, color='#56b4e9', alpha=0.15)
+            self.graph.set_title("Daily Calories", color="#ffffff")
+            self.graph.set_xlabel("Date", color="#ffffff")
+            self.graph.set_ylabel("Calories", color="#ffffff")
+            self.graph.grid(True, linestyle='--', alpha=0.3)
+            # Label x-axis only when number of points is manageable
+            if len(dates) <= 20:
+                self.graph.set_xticks(range(len(dates)))
+                self.graph.set_xticklabels(display_dates, rotation=45, ha='right')
+            else:
+                self.graph.set_xticks([])
+            self.canvas.figure.tight_layout()
+        else:
+            self.graph.text(0.5, 0.5, "No data for selected range", ha='center', va='center', color='#cccccc', transform=self.graph.transAxes)
+            self.graph.set_xticks([])
+            self.graph.set_yticks([])
+        self.canvas.draw()
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
@@ -363,6 +540,23 @@ class HealthApp(QMainWindow):
             QLabel {
                 color: #ffffff;
             }
+            QComboBox {
+                background-color: #404040;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+            }
+            QComboBox:hover { 
+                background-color: #5a5a5a; 
+            }
+            Figure {
+                background-color: #404040;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+            }
         """)
 
         self.tabs = QTabWidget()
@@ -372,7 +566,7 @@ class HealthApp(QMainWindow):
         self.tabs.addTab(HomePage(), "Home")
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
         self.tabs.addTab(QWidget(), "Exercise Tracker (todo)")
-        self.tabs.addTab(QWidget(), "Graphs (todo)")
+        self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(QWidget(), "Goal (todo)")
         self.tabs.addTab(QWidget(), "Meal Plans (todo)")
         self.tabs.addTab(QWidget(), "Chat Bot (todo)")

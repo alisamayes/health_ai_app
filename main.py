@@ -1,3 +1,4 @@
+from cProfile import label
 import sys
 import os
 import sqlite3
@@ -23,9 +24,9 @@ Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = ["Calorie tracker", "exercise tracker", "graphs of both over time period", "weight goal", "meal plan/ ideas", "AI suggested meal substitues", "desktop promts/ reminders"]
-extra_todo_list = ["exercise calorie calculator based on input factors", "goal advice", "sleep diary", "AI chat bot for health advice", "health by day trends", "AI driven improvements", "mobile support"]
-completed_todo_list = [""]
+core_todo_list = ["exercise tracker", "graphs of both over time period", "weight goal", "meal plan/ ideas", "AI suggested meal substitues", "desktop promts/ reminders"]
+extra_todo_list = ["exercise calorie calculator based on input factors", "goal advice", "sleep diary", "AI chat bot for health advice", "health by day trends", "AI driven improvements", "mobile support", "weekly weigh in reminders"]
+completed_todo_list = ["Calorie tracker", "app styling"]
 """
 
 
@@ -392,8 +393,8 @@ class Graphs(QWidget):
 
         self.graph.clear()
         if dates:
-            self.graph.plot(dates, totals, marker='o', color='#56b4e9', linewidth=2)
-            self.graph.fill_between(range(len(totals)), totals, color='#56b4e9', alpha=0.15)
+            self.graph.plot(dates, totals, marker='o', color='#009423', linewidth=2)
+            self.graph.fill_between(range(len(totals)), totals, color='#009423', alpha=0.15)
             self.graph.set_title("Daily Calories", color="#ffffff")
             self.graph.set_xlabel("Date", color="#ffffff")
             self.graph.set_ylabel("Calories", color="#ffffff")
@@ -410,6 +411,153 @@ class Graphs(QWidget):
             self.graph.set_xticks([])
             self.graph.set_yticks([])
         self.canvas.draw()
+
+class Goals(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+
+        # Current weight label (click to make popup appear to input value)
+        # Target weight goal label (click to make popup appear to input value)
+        # Weightloss value label (current - weight)        
+
+        self.current_weight = QPushButton("Current Weight: -- kg")
+        self.target_weight = QPushButton("Target Weight: -- kg")
+        self.weight_loss_value = QLabel("Weight Loss: -- kg")
+
+        self.current_weight.clicked.connect(self.input_current_weight)
+        self.target_weight.clicked.connect(self.input_target_weight)
+
+        target_layout = QHBoxLayout()
+        target_layout.addWidget(self.current_weight)
+        target_layout.addWidget(self.target_weight)
+        target_layout.addWidget(self.weight_loss_value)
+
+        self.layout.addLayout(target_layout)
+
+        # Load existing data
+        self.load_info()
+
+    def input_current_weight(self):
+        """Make popup appear where user can enter a weight in kg for their current weight. 
+        This data is recorded in a database so it's saved for future use.
+        Change text of button to match the current weight."""
+        weight, ok = QInputDialog.getDouble(
+            self,
+            "Current Weight",
+            "Enter your current weight (kg):",
+            value=100.0,
+            min=50.0,
+            max=300.0,
+            decimals=1
+        )
+        if ok:
+            # Save to database
+            conn = sqlite3.connect("health_app.db")
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    current_weight REAL,
+                    target_weight REAL,
+                    updated_date TEXT NOT NULL
+                )
+            """)
+            c.execute("INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
+                     (weight, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            conn.close()
+            
+            # Update button text
+            self.current_weight.setText(f"Current Weight: {weight} kg")
+            # Reload to update weight loss calculation
+            self.load_info()
+
+    def input_target_weight(self):
+        """Make popup appear where user can enter a weight in kg for their target weight. 
+        This data is recorded in a database so it's saved for future use.
+        Change text of button to match the target weight."""
+        weight, ok = QInputDialog.getDouble(
+            self,
+            "Target Weight",
+            "Enter your target weight (kg):",
+            value=100.0,
+            min=50.0,
+            max=300.0,
+            decimals=1
+        )
+        if ok:
+            # Save to database
+            conn = sqlite3.connect("health_app.db")
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    current_weight REAL,
+                    target_weight REAL,
+                    updated_date TEXT NOT NULL
+                )
+            """)
+            c.execute("INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
+                     (weight, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            conn.close()
+            
+            # Update button text
+            self.target_weight.setText(f"Target Weight: {weight} kg")
+            # Reload to update weight loss calculation
+            self.load_info()
+
+    def load_info(self):
+        """Reload the page so the current and target weight buttons reflect the respective 
+        values in the database and the loss value label shows the difference."""
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                current_weight REAL,
+                target_weight REAL,
+                updated_date TEXT NOT NULL
+            )
+        """)
+        
+        # Get latest current weight
+        c.execute("SELECT current_weight FROM goals WHERE current_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
+        current_row = c.fetchone()
+        current_weight = current_row[0] if current_row else None
+        
+        # Get latest target weight
+        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
+        target_row = c.fetchone()
+        target_weight = target_row[0] if target_row else None
+        
+        conn.close()
+        
+        # Update button texts
+        if current_weight is not None:
+            self.current_weight.setText(f"Current Weight: {current_weight} kg")
+        else:
+            self.current_weight.setText("Current Weight: -- kg")
+            
+        if target_weight is not None:
+            self.target_weight.setText(f"Target Weight: {target_weight} kg")
+        else:
+            self.target_weight.setText("Target Weight: -- kg")
+        
+        # Calculate and display weight loss
+        if current_weight is not None and target_weight is not None:
+            weight_loss = current_weight - target_weight
+            if weight_loss > 0:
+                self.weight_loss_value.setText(f"Weight Loss Goal: {weight_loss:.1f} kg")
+            elif weight_loss < 0:
+                self.weight_loss_value.setText(f"Weight Gain Goal: {abs(weight_loss):.1f} kg")
+            else:
+                self.weight_loss_value.setText("Goal Achieved! 🎉")
+        else:
+            self.weight_loss_value.setText("Weight Loss: -- kg")
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
@@ -464,10 +612,10 @@ class HealthApp(QMainWindow):
                 min-width: 0px; /* smaller padding for  the < and > buttons which were getting cut off due to not enough space */
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
+                background-color: #00a527;
             }
             QPushButton:pressed {
-                background-color: #6a6a6a;
+                background-color: #007a1c;
             }
             QLineEdit {
                 background-color: #3a3a3a;
@@ -477,7 +625,7 @@ class HealthApp(QMainWindow):
                 border-radius: 6px;
             }
             QLineEdit:focus {
-                border-color: #0078d4;
+                border-color: #009423;
             }
             QDateEdit {
                 background-color: #3a3a3a;
@@ -487,7 +635,7 @@ class HealthApp(QMainWindow):
                 border-radius: 6px;
             }
             QDateEdit:focus {
-                border-color: #0078d4;
+                border-color: #009423;
             }
             QTableWidget {
                 background-color: #2b2b2b;
@@ -495,7 +643,7 @@ class HealthApp(QMainWindow):
                 border: 2px solid #404040;
                 border-radius: 8px;
                 gridline-color: #404040;
-                selection-background-color: #0078d4;
+                selection-background-color: #009423;
                 alternate-background-color: #3a3a3a;
             }
             QTableWidget::item {
@@ -505,7 +653,7 @@ class HealthApp(QMainWindow):
                 color: #ffffff;
             }
             QTableWidget::item:selected {
-                background-color: #0078d4;
+                background-color: #009423;
                 color: #ffffff;
             }
             QTableWidget::item:alternate {
@@ -543,14 +691,22 @@ class HealthApp(QMainWindow):
             QComboBox {
                 background-color: #404040;
                 color: #ffffff;
-                border: none;
+                border: 2px solid transparent;
                 padding: 8px 16px;
                 border-radius: 6px;
             }
             QComboBox:hover { 
-                background-color: #5a5a5a; 
+                background-color: #404040;
+                border-color: #00a527;
             }
             Figure {
+                background-color: #404040;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+            }
+            QInputDialog {
                 background-color: #404040;
                 color: #ffffff;
                 border: none;
@@ -567,7 +723,7 @@ class HealthApp(QMainWindow):
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
         self.tabs.addTab(QWidget(), "Exercise Tracker (todo)")
         self.tabs.addTab(Graphs(), "Graphs")
-        self.tabs.addTab(QWidget(), "Goal (todo)")
+        self.tabs.addTab(Goals(), "Goals")
         self.tabs.addTab(QWidget(), "Meal Plans (todo)")
         self.tabs.addTab(QWidget(), "Chat Bot (todo)")
 

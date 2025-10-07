@@ -139,6 +139,10 @@ class CalorieTracker(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.ResizeToContents) 
         self.table.setWordWrap(True) # Enable word wrapping for long food names
         self.table.setColumnWidth(1, 80) # Set minimum column widths
+        
+        # Enable keyboard focus and selection
+        self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
 
         # Section for showing total daily calorie intake for a given date
         self.calorie_label = QLabel("Daily Calories:")
@@ -239,6 +243,49 @@ class CalorieTracker(QWidget):
         total_calories = sum(row[1] for row in rows) if rows else 0
         selected_date_display = self.date_selector.date().toString("dd-MM-yyyy")
         self.calorie_label.setText(f"Daily Calories ({selected_date_display}): {total_calories}")
+
+    def keyPressEvent(self, event):
+        """Handle keyboard press of the DEL button"""
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_selected_rows()
+        else:
+            # Pass other key events to the parent class
+            super().keyPressEvent(event)
+
+    def delete_selected_rows(self):
+        """Deletes the selected row from the database"""
+        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
+        if not selected_rows:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Confirmation",
+            f"Delete {len(selected_rows)} record(s) from database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+        
+        # Get all records for this date with their IDs
+        c.execute("SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC", (date_str,))
+        rows = c.fetchall()
+
+        # Delete the selected records
+        for row_index in selected_rows:
+            if row_index < len(rows):
+                record_id = rows[row_index][0]  # Get the ID from the database query
+                c.execute("DELETE FROM calories WHERE id = ?", (record_id,))
+
+        conn.commit()
+        conn.close()
+
+        self.load_entries()
 
 class Graphs(QWidget):
     def __init__(self):
@@ -417,12 +464,8 @@ class Goals(QWidget):
         super().__init__()
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
-
-
-        # Current weight label (click to make popup appear to input value)
-        # Target weight goal label (click to make popup appear to input value)
-        # Weightloss value label (current - weight)        
-
+       
+        # Following buttons are for inputting and displaying the weight goal values
         self.current_weight = QPushButton("Current Weight: -- kg")
         self.target_weight = QPushButton("Target Weight: -- kg")
         self.weight_loss_value = QLabel("Weight Loss: -- kg")
@@ -437,8 +480,40 @@ class Goals(QWidget):
 
         self.layout.addLayout(target_layout)
 
-        # Load existing data
+        # Load existing values and update labels
         self.load_info()
+
+
+        # Matplotlib canvas for displaying the history of weight entries
+        self.canvas = FigureCanvas(Figure(figsize=(6, 3), dpi=100))
+        self.graph = self.canvas.figure.add_subplot(111)
+
+        self.layout.addWidget(self.canvas)
+
+        # Ensure canvas/figure/axes respect dark theme colors (Qt stylesheets do not style Matplotlib)
+        dark_bg = "#2b2b2b"
+        light_fg = "#ffffff"
+        grid_color = "#5a5a5a"
+        try:
+            self.canvas.setStyleSheet(f"background-color: {dark_bg};")
+            self.canvas.figure.set_facecolor(dark_bg)
+            self.graph.set_facecolor(dark_bg)
+            for spine in self.graph.spines.values():
+                spine.set_color(grid_color)
+            self.graph.tick_params(colors=light_fg)
+            self.graph.title.set_color(light_fg)
+            self.graph.xaxis.label.set_color(light_fg)
+            self.graph.yaxis.label.set_color(light_fg)
+        except Exception:
+            pass
+        
+        # Connect click event to canvas
+        self.canvas.mpl_connect('button_press_event', self.on_click)
+        
+        # Initial load
+        target_weight = self.get_target_weight()
+        self.load_graphs(target_weight)
+
 
     def input_current_weight(self):
         """Make popup appear where user can enter a weight in kg for their current weight. 
@@ -472,8 +547,11 @@ class Goals(QWidget):
             
             # Update button text
             self.current_weight.setText(f"Current Weight: {weight} kg")
-            # Reload to update weight loss calculation
+            # Reload to update weight loss calculation and graph
             self.load_info()
+            # Get target weight for graph y-axis limit
+            target_weight = self.get_target_weight()
+            self.load_graphs(target_weight)
 
     def input_target_weight(self):
         """Make popup appear where user can enter a weight in kg for their target weight. 
@@ -507,8 +585,10 @@ class Goals(QWidget):
             
             # Update button text
             self.target_weight.setText(f"Target Weight: {weight} kg")
-            # Reload to update weight loss calculation
+            # Reload to update weight loss calculation and graph
             self.load_info()
+            # Refresh graph with new target weight as y-axis limit
+            self.load_graphs(weight)
 
     def load_info(self):
         """Reload the page so the current and target weight buttons reflect the respective 
@@ -558,6 +638,194 @@ class Goals(QWidget):
                 self.weight_loss_value.setText("Goal Achieved! 🎉")
         else:
             self.weight_loss_value.setText("Weight Loss: -- kg")
+
+    def load_graphs(self, target_weight):
+        """Load and display weight progress graph from database"""
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        
+        # Query for current weight entries with dates
+        c.execute("""
+            SELECT current_weight, updated_date 
+            FROM goals 
+            WHERE current_weight IS NOT NULL 
+            ORDER BY updated_date ASC
+        """)
+        rows = c.fetchall()
+        conn.close()
+
+        dates = []
+        weights = []
+
+        # Extract dates and weights from database results
+        for row in rows:
+            weight = row[0]  # current_weight
+            date_str = row[1]  # updated_date
+            
+            # Convert date string to datetime for proper sorting and display
+            try:
+                # Parse the datetime string (format: "YYYY-MM-DD HH:MM:SS")
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                dates.append(date_obj.strftime("%d-%m-%Y"))  # Format for display
+                weights.append(weight)
+            except ValueError:
+                # Handle different date formats if needed
+                continue
+        
+        # Store data for click events
+        self.dates_copy = dates.copy()
+        self.weights_copy = weights.copy()
+
+        self.graph.clear()
+        
+        if dates and weights:
+            # Plot the weight data
+            self.graph.plot(dates, weights, marker='o', color='#009423', linewidth=2)
+            self.graph.fill_between(range(len(weights)), weights, color='#009423', alpha=0.15)
+            self.graph.set_title("Weight Progress", color="#ffffff")
+            self.graph.set_xlabel("Date", color="#ffffff")
+            self.graph.set_ylabel("Weight (kg)", color="#ffffff")
+            self.graph.grid(True, linestyle='--', alpha=0.3)
+            
+            # Label x-axis only when number of points is manageable
+            if len(dates) <= 20:
+                self.graph.set_xticks(range(len(dates)))
+                self.graph.set_xticklabels(dates, rotation=45, ha='right')
+            else:
+                self.graph.set_xticks([])
+        else:
+            # Show message when no data is available
+            self.graph.text(0.5, 0.5, "No weight data available", 
+                          ha='center', va='center', color='#cccccc', 
+                          transform=self.graph.transAxes)
+            self.graph.set_xticks([])
+            self.graph.set_yticks([])
+            self.graph.set_title("Weight Progress", color="#ffffff")
+            self.graph.set_xlabel("Date", color="#ffffff")
+            self.graph.set_ylabel("Weight (kg)", color="#ffffff")
+        
+        # Set y-axis bottom limit to target weight if provided (apply to both cases)
+        if target_weight is not None:
+            self.graph.set_ylim(bottom=target_weight)
+        else:
+            self.graph.set_ylim(bottom=50.0)
+
+        self.canvas.figure.tight_layout()
+        self.canvas.draw()
+
+    def on_click(self, event):
+        """Handle click events on the graph to show data point information"""
+        
+        
+        # Check if cursor aligns with a data point
+        if event.inaxes != self.graph:
+            return
+        if not self.dates_copy or not self.weights_copy:
+            return
+        click_x = event.xdata
+        click_y = event.ydata
+        if click_x is None or click_y is None:
+            return
+        
+        # Find the closest data point
+        min_distance = float('inf')
+        closest_index = -1
+        
+        for i, (date_str, weight) in enumerate(zip(self.dates_copy, self.weights_copy)):
+            # Convert date string back to index for distance calculation
+            date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+            x_coord = i  # x-axis is indexed by position
+            y_coord = weight
+            
+            # Calculate distance from click to data point
+            distance = ((click_x - x_coord) ** 2 + (click_y - y_coord) ** 2) ** 0.5
+            
+            if distance < min_distance:
+                min_distance = distance
+                closest_index = i
+        
+        # Show popup if we found a close enough point (within reasonable distance)
+        if closest_index >= 0 and min_distance < 0.5:  # Adjust threshold as needed
+            date_str = self.dates_copy[closest_index]
+            weight = self.weights_copy[closest_index]
+            
+            # Create and show popup dialog
+            self.show_data_point_popup(date_str, weight, closest_index)
+    
+    def show_data_point_popup(self, date_str, weight, index):
+        """Show popup dialog with data point information"""
+        # Calculate days since first entry
+        if self.dates_copy:
+            first_date = datetime.strptime(self.dates_copy[0], "%d-%m-%Y")
+            current_date = datetime.strptime(date_str, "%d-%m-%Y")
+            days_since_start = (current_date - first_date).days
+            
+            # Calculate weight change from previous entry
+            weight_change = ""
+            if index > 0:
+                prev_weight = self.weights_copy[index - 1]
+                change = weight - prev_weight
+                if change > 0:
+                    weight_change = f" (+{change:.1f} kg from previous)"
+                elif change < 0:
+                    weight_change = f" ({change:.1f} kg from previous)"
+                else:
+                    weight_change = " (no change from previous)"
+            
+            # Calculate weight change from first entry
+            total_change = ""
+            if index > 0:
+                first_weight = self.weights_copy[0]
+                total_change_val = weight - first_weight
+                if total_change_val > 0:
+                    total_change = f" (+{total_change_val:.1f} kg from start)"
+                elif total_change_val < 0:
+                    total_change = f" ({total_change_val:.1f} kg from start)"
+                else:
+                    total_change = " (no change from start)"
+            
+            #The following message is indented in the popup but I disliked how it looked code wise if I had no indentation here
+            message = f"""Weight Entry Details:
+            Date: {date_str}
+            Weight: {weight:.1f} kg
+            Days since start: {days_since_start}{weight_change}{total_change}
+
+            Entry #{index + 1} of {len(self.dates_copy)} total entries"""
+        else:
+            message = f"Date: {date_str}\nWeight: {weight:.1f} kg"
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Weight Entry Details")
+        msg_box.setText(message)
+
+        ok_button = msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        edit_button = msg_box.addButton("Edit", QMessageBox.ButtonRole.ActionRole)
+        delete_button = msg_box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        
+        msg_box.exec()
+
+        clicked_button = msg_box.clickedButton()
+
+        if clicked_button == ok_button:
+            print("OK pressed")
+            return
+        elif clicked_button == edit_button:
+            print("Edit pressed")
+            return
+        elif clicked_button == delete_button:
+            print("Delete pressed")
+            return
+
+    def get_target_weight(self):
+        """Get the current target weight from database"""
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
+        target_row = c.fetchone()
+        conn.close()
+        return target_row[0] if target_row else None
+
+
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
@@ -707,6 +975,13 @@ class HealthApp(QMainWindow):
                 border-radius: 6px;
             }
             QInputDialog {
+                background-color: #404040;
+                color: #ffffff;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+            }
+            QMessageBox {
                 background-color: #404040;
                 color: #ffffff;
                 border: none;

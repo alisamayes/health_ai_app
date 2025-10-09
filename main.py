@@ -9,7 +9,8 @@ from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox
+    QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
+    QDialog, QDialogButtonBox, QFormLayout
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -45,7 +46,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- Home Page Widget ---
+
 class HomePage(QWidget):
     def __init__(self):
         super().__init__()
@@ -82,7 +83,14 @@ class HomePage(QWidget):
 
         self.setLayout(self.layout)
 
-# --- Calorie Tracker Widget ---
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Re-scale the pixmap when window size changes
+        pixmap = QPixmap("assets/legendary_boop.png")
+        if not pixmap.isNull():
+            size = int(min(self.width(), self.height()) * 0.5)  # 50% of smaller dimension
+            self.logo_label.setPixmap(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
 class CalorieTracker(QWidget):
     def __init__(self):
         super().__init__()
@@ -541,7 +549,7 @@ class Goals(QWidget):
                 )
             """)
             c.execute("INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
-                     (weight, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                     (weight, datetime.now().strftime("%Y-%m-%d")))
             conn.commit()
             conn.close()
             
@@ -579,7 +587,7 @@ class Goals(QWidget):
                 )
             """)
             c.execute("INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
-                     (weight, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                     (weight, datetime.now().strftime("%Y-%m-%d")))
             conn.commit()
             conn.close()
             
@@ -590,6 +598,15 @@ class Goals(QWidget):
             # Refresh graph with new target weight as y-axis limit
             self.load_graphs(weight)
 
+    def get_target_weight(self):
+        """Get the current target weight from database"""
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
+        target_row = c.fetchone()
+        conn.close()
+        return target_row[0] if target_row else None
+    
     def load_info(self):
         """Reload the page so the current and target weight buttons reflect the respective 
         values in the database and the loss value label shows the difference."""
@@ -644,9 +661,9 @@ class Goals(QWidget):
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
         
-        # Query for current weight entries with dates
+        # Query for current weight entries with dates and IDs
         c.execute("""
-            SELECT current_weight, updated_date 
+            SELECT id, current_weight, updated_date 
             FROM goals 
             WHERE current_weight IS NOT NULL 
             ORDER BY updated_date ASC
@@ -654,25 +671,36 @@ class Goals(QWidget):
         rows = c.fetchall()
         conn.close()
 
+        ids = []
         dates = []
         weights = []
 
-        # Extract dates and weights from database results
+        # Extract IDs, dates and weights from database results
         for row in rows:
-            weight = row[0]  # current_weight
-            date_str = row[1]  # updated_date
+            entry_id = row[0]  # id
+            weight = row[1]  # current_weight
+            date_str = row[2]  # updated_date
             
             # Convert date string to datetime for proper sorting and display
             try:
-                # Parse the datetime string (format: "YYYY-MM-DD HH:MM:SS")
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                # Try parsing as date-only format first (YYYY-MM-DD)
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                ids.append(entry_id)
                 dates.append(date_obj.strftime("%d-%m-%Y"))  # Format for display
                 weights.append(weight)
             except ValueError:
-                # Handle different date formats if needed
-                continue
+                try:
+                    # Fallback to datetime format for old entries (YYYY-MM-DD HH:MM:SS)
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    ids.append(entry_id)
+                    dates.append(date_obj.strftime("%d-%m-%Y"))  # Format for display
+                    weights.append(weight)
+                except ValueError:
+                    # Skip entries with invalid date formats
+                    continue
         
         # Store data for click events
+        self.ids_copy = ids.copy()
         self.dates_copy = dates.copy()
         self.weights_copy = weights.copy()
 
@@ -807,23 +835,107 @@ class Goals(QWidget):
         clicked_button = msg_box.clickedButton()
 
         if clicked_button == ok_button:
-            print("OK pressed")
             return
         elif clicked_button == edit_button:
-            print("Edit pressed")
+            entry_id = self.ids_copy[index]
+            self.edit_weight_entry(date_str, weight, index, entry_id)
             return
         elif clicked_button == delete_button:
-            print("Delete pressed")
+            entry_id = self.ids_copy[index]
+            self.delete_weight_entry(date_str, weight, index, entry_id)
             return
 
-    def get_target_weight(self):
-        """Get the current target weight from database"""
+    def edit_weight_entry(self, current_date_str, current_weight, index, entry_id):
+        """Show edit dialog for weight entry"""
+        # Parse current date for the dialog
+        current_date = datetime.strptime(current_date_str, "%d-%m-%Y")
+        
+        # Create custom dialog
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Weight Entry")
+        dialog.setModal(True)
+        
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+        
+        # Date input
+        date_edit = QDateEdit()
+        date_edit.setDate(QDate.fromString(current_date_str, "dd-MM-yyyy"))
+        date_edit.setDisplayFormat("dd-MM-yyyy")
+        form_layout.addRow("Date:", date_edit)
+        
+        # Weight input
+        weight_input, ok = QInputDialog.getDouble(
+            dialog,
+            "Edit Weight",
+            "Enter new weight (kg):",
+            value=current_weight,
+            min=50.0,
+            max=300.0,
+            decimals=1
+        )
+        
+        if not ok:
+            return  # User cancelled
+            
+        # Create button box
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        
+        layout.addLayout(form_layout)
+        layout.addWidget(button_box)
+        dialog.setLayout(layout)
+        
+        # Show dialog
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_date = date_edit.date()
+            new_date_str = new_date.toString("yyyy-MM-dd")
+            
+            # Update database using the entry ID
+            self.update_weight_entry(entry_id, new_date_str, weight_input)
+            
+    def update_weight_entry(self, entry_id, new_date_str, new_weight):
+        """Update the weight entry in the database using the entry ID"""
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
-        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
-        target_row = c.fetchone()
+        
+        # Update the entry by ID
+        c.execute("""
+            UPDATE goals 
+            SET current_weight = ?, updated_date = ?
+            WHERE id = ?
+        """, (new_weight, new_date_str, entry_id))
+        
+        conn.commit()
         conn.close()
-        return target_row[0] if target_row else None
+        
+        # Reload the graph and refresh all labels
+        target_weight = self.get_target_weight()
+        self.load_graphs(target_weight)
+        
+        # Force complete refresh of the canvas and axis labels
+        self.canvas.figure.tight_layout()
+        self.canvas.flush_events()
+        self.canvas.draw()
+
+    def delete_weight_entry(self, current_date_str, current_weight, index, entry_id):
+        """Remove weight entry from database and graph"""
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("DELETE FROM goals WHERE id = ?", (entry_id,))
+        conn.commit()
+        conn.close()
+        
+        # Reload the graph and refresh all labels
+        target_weight = self.get_target_weight()
+        self.load_graphs(target_weight)
+        
+        # Force complete refresh of the canvas and axis labels
+        self.canvas.figure.tight_layout()
+        self.canvas.flush_events()
+        self.canvas.draw()
 
 
 

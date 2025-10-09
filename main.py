@@ -47,6 +47,15 @@ def init_db():
     conn.close()
 
 
+#Global Variables for the styling
+white = "#ffffff"
+background_dark_gray = "#2b2b2b"
+border_gray = "#404040"
+button_active_light_gray = "#5a5a5a"
+hover_gray = "#4a4a4a"
+hover_light_green = "#00a527"
+active_dark_green = "#007a1c"
+
 class HomePage(QWidget):
     def __init__(self):
         super().__init__()
@@ -448,8 +457,8 @@ class Graphs(QWidget):
 
         self.graph.clear()
         if dates:
-            self.graph.plot(dates, totals, marker='o', color='#009423', linewidth=2)
-            self.graph.fill_between(range(len(totals)), totals, color='#009423', alpha=0.15)
+            self.graph.plot(dates, totals, marker='o', color= active_dark_green, linewidth=2)
+            self.graph.fill_between(range(len(totals)), totals, color= active_dark_green, alpha=0.15)
             self.graph.set_title("Daily Calories", color="#ffffff")
             self.graph.set_xlabel("Date", color="#ffffff")
             self.graph.set_ylabel("Calories", color="#ffffff")
@@ -708,8 +717,8 @@ class Goals(QWidget):
         
         if dates and weights:
             # Plot the weight data
-            self.graph.plot(dates, weights, marker='o', color='#009423', linewidth=2)
-            self.graph.fill_between(range(len(weights)), weights, color='#009423', alpha=0.15)
+            self.graph.plot(dates, weights, marker='o', color= active_dark_green, linewidth=2)
+            self.graph.fill_between(range(len(weights)), weights, color= active_dark_green, alpha=0.15)
             self.graph.set_title("Weight Progress", color="#ffffff")
             self.graph.set_xlabel("Date", color="#ffffff")
             self.graph.set_ylabel("Weight (kg)", color="#ffffff")
@@ -952,154 +961,154 @@ class HealthApp(QMainWindow):
         self.setWindowIcon(window_icon)
         
         # Apply dark theme styling
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QTabWidget::pane {
-                border: 1px solid #404040;
-                background-color: #2b2b2b;
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {background_dark_gray};
+                color: {white};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {border_gray};
+                background-color: {background_dark_gray};
                 border-radius: 8px;
-            }
-            QTabWidget::tab-bar {
+            }}
+            QTabWidget::tab-bar {{
                 alignment: center;
-            }
-            QTabBar::tab {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QTabBar::tab {{
+                background-color: {border_gray};
+                color: {white};
                 padding: 8px 16px;
                 margin: 2px;
                 border-radius: 6px;
                 border: none;
-            }
-            QTabBar::tab:selected {
-                background-color: #5a5a5a;
-            }
-            QTabBar::tab:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {button_active_light_gray};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {hover_gray};
+            }}
+            QPushButton {{
+                background-color: {border_gray};
+                color: {white};
                 border: none;
                 padding: 8px 16px;
                 border-radius: 6px;
                 font-weight: bold;
-            }
-            QPushButton#navigationBtn {
+            }}
+            QPushButton#navigationBtn {{
                 padding: 2px 6px;
                 min-width: 0px; /* smaller padding for  the < and > buttons which were getting cut off due to not enough space */
-            }
-            QPushButton:hover {
-                background-color: #00a527;
-            }
-            QPushButton:pressed {
-                background-color: #007a1c;
-            }
-            QLineEdit {
-                background-color: #3a3a3a;
-                color: #ffffff;
-                border: 2px solid #404040;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_light_green};
+            }}
+            QPushButton:pressed {{
+                background-color: {active_dark_green};
+            }}
+            QLineEdit {{
+                background-color: {background_dark_gray};
+                color: {white};
+                border: 2px solid {border_gray};
                 padding: 8px;
                 border-radius: 6px;
-            }
-            QLineEdit:focus {
-                border-color: #009423;
-            }
-            QDateEdit {
-                background-color: #3a3a3a;
-                color: #ffffff;
-                border: 2px solid #404040;
+            }}
+            QLineEdit:focus {{
+                border-color: {active_dark_green};
+            }}
+            QDateEdit {{
+                background-color: {background_dark_gray};
+                color: {white};
+                border: 2px solid {border_gray};
                 padding: 8px;
                 border-radius: 6px;
-            }
-            QDateEdit:focus {
-                border-color: #009423;
-            }
-            QTableWidget {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 2px solid #404040;
+            }}
+            QDateEdit:focus {{
+                border-color: {active_dark_green};
+            }}
+            QTableWidget {{
+                background-color: {background_dark_gray};
+                color: {white};
+                border: 2px solid {border_gray};
                 border-radius: 8px;
-                gridline-color: #404040;
-                selection-background-color: #009423;
-                alternate-background-color: #3a3a3a;
-            }
-            QTableWidget::item {
+                gridline-color: {border_gray};
+                selection-background-color: {active_dark_green};
+                alternate-background-color: {background_dark_gray};
+            }}
+            QTableWidget::item {{
                 padding: 8px;
-                border-bottom: 1px solid #404040;
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QTableWidget::item:selected {
-                background-color: #009423;
-                color: #ffffff;
-            }
-            QTableWidget::item:alternate {
-                background-color: #3a3a3a;
-            }
-            QHeaderView {
-                background-color: #404040;
-                color: #ffffff;
-            }
-            QHeaderView::section {
-                background-color: #404040 !important;
-                color: #ffffff !important;
+                border-bottom: 1px solid {border_gray};
+                background-color: {background_dark_gray};
+                color: {white};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {active_dark_green};
+                color: {white};
+            }}
+            QTableWidget::item:alternate {{
+                background-color: {background_dark_gray};
+            }}
+            QHeaderView {{
+                background-color: {border_gray};
+                color: {white};
+            }}
+            QHeaderView::section {{
+                background-color: {border_gray} !important;
+                color: {white} !important;
                 padding: 8px;
                 border: none;
                 font-weight: bold;
                 border-radius: 0px;
-            }
-            QHeaderView::section:horizontal {
-                border-right: 1px solid #5a5a5a;
-                background-color: #404040 !important;
-                color: #ffffff !important;
-            }
-            QHeaderView::section:vertical {
-                border-bottom: 1px solid #5a5a5a;
-                background-color: #404040 !important;
-                color: #ffffff !important;
-            }
-            QTableCornerButton::section {
-                background-color: #404040 !important;
+            }}
+            QHeaderView::section:horizontal {{
+                border-right: 1px solid {button_active_light_gray};
+                background-color: {border_gray} !important;
+                color: {white} !important;
+            }}
+            QHeaderView::section:vertical {{
+                border-bottom: 1px solid {button_active_light_gray};
+                background-color: {border_gray} !important;
+                color: {white} !important;
+            }}
+            QTableCornerButton::section {{
+                background-color: {border_gray} !important;
                 border: none;
-            }
-            QLabel {
-                color: #ffffff;
-            }
-            QComboBox {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QLabel {{
+                color: {white};
+            }}
+            QComboBox {{
+                background-color: {border_gray};
+                color: {white};
                 border: 2px solid transparent;
                 padding: 8px 16px;
                 border-radius: 6px;
-            }
-            QComboBox:hover { 
-                background-color: #404040;
-                border-color: #00a527;
-            }
-            Figure {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QComboBox:hover {{ 
+                background-color: {border_gray};
+                border-color: {hover_light_green};
+            }}
+            Figure {{
+                background-color: {border_gray};
+                color: {white};
                 border: none;
                 padding: 8px 16px;
                 border-radius: 6px;
-            }
-            QInputDialog {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QInputDialog {{
+                background-color: {border_gray};
+                color: {white};
                 border: none;
                 padding: 8px 16px;
                 border-radius: 6px;
-            }
-            QMessageBox {
-                background-color: #404040;
-                color: #ffffff;
+            }}
+            QMessageBox {{
+                background-color: {border_gray};
+                color: {white};
                 border: none;
                 padding: 8px 16px;
                 border-radius: 6px;
-            }
+            }}
         """)
 
         self.tabs = QTabWidget()

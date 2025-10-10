@@ -4,16 +4,17 @@ import os
 import sqlite3
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, Qt, QTimer
 from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
-    QDialog, QDialogButtonBox, QFormLayout
+    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from winotify import Notification, audio
 
 """
 This is the starter file for an AI-driven self health and tracking app I am working on, using Python for the main part, PyQt for the GUI and SQLite for the database
@@ -25,9 +26,9 @@ Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = ["exercise tracker", "graphs of both over time period", "weight goal", "meal plan/ ideas", "AI suggested meal substitues", "desktop promts/ reminders"]
-extra_todo_list = ["exercise calorie calculator based on input factors", "goal advice", "sleep diary", "AI chat bot for health advice", "health by day trends", "AI driven improvements", "mobile support", "weekly weigh in reminders"]
-completed_todo_list = ["Calorie tracker", "app styling"]
+core_todo_list = ["exercise tracker", "graphs of both over time period", "meal plan/ ideas", "AI suggested meal substitues", "desktop promts/ reminders"]
+extra_todo_list = ["exercise calorie calculator based on input factors", "goal advice", "sleep diary", "AI chat bot for health advice", "health by day trends", "AI driven improvements", "mobile support", "weekly weigh in reminders", "silent auto open app on bootup"]
+completed_todo_list = ["Calorie tracker", "app styling", "weight goal", "basic desktop notifcations"]
 """
 
 
@@ -47,7 +48,7 @@ def init_db():
     conn.close()
 
 
-#Global Variables for the styling
+# Global Variables for the styling
 white = "#ffffff"
 background_dark_gray = "#2b2b2b"
 border_gray = "#404040"
@@ -66,7 +67,7 @@ class HomePage(QWidget):
         self.logo_label = QLabel()
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        pixmap = QPixmap("assets/legendary_boop.png")
+        pixmap = QPixmap("assets/legnedary_astrid_boop_upscale.png")
         if not pixmap.isNull():
             self.logo_label.setPixmap(pixmap.scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
@@ -85,17 +86,21 @@ class HomePage(QWidget):
         subtitle_font.setPointSize(12)
         self.subtitle_label.setFont(subtitle_font)
 
+        # Desktop notification test button
+        self.desktop_notif = QPushButton("Desktop Notification Test")
+
         # Add widgets to layout
         self.layout.addWidget(self.logo_label)
         self.layout.addWidget(self.title_label)
         self.layout.addWidget(self.subtitle_label)
+        self.layout.addWidget(self.desktop_notif)
 
         self.setLayout(self.layout)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Re-scale the pixmap when window size changes
-        pixmap = QPixmap("assets/legendary_boop.png")
+        pixmap = QPixmap("assets/legnedary_astrid_boop_upscale.png")
         if not pixmap.isNull():
             size = int(min(self.width(), self.height()) * 0.5)  # 50% of smaller dimension
             self.logo_label.setPixmap(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -955,8 +960,8 @@ class HealthApp(QMainWindow):
         self.setWindowTitle("Health Tracker App")
         self.setGeometry(300, 300, 800, 400)
         # Prefer an .ico for Windows taskbar; fallback to PNG if .ico not present
-        icon_path_ico = os.path.join("assets", "legendary_boop.ico")
-        icon_path_png = os.path.join("assets", "legendary_boop.png")
+        icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
+        icon_path_png = os.path.join("assets", "legnedary_astrid_boop_upscale.png")
         window_icon = QIcon(icon_path_ico) if os.path.exists(icon_path_ico) else QIcon(icon_path_png)
         self.setWindowIcon(window_icon)
         
@@ -1115,13 +1120,79 @@ class HealthApp(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         # Add tabs
-        self.tabs.addTab(HomePage(), "Home")
+        self.home_page = HomePage()
+        self.tabs.addTab(self.home_page, "Home")
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
         self.tabs.addTab(QWidget(), "Exercise Tracker (todo)")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")
         self.tabs.addTab(QWidget(), "Meal Plans (todo)")
         self.tabs.addTab(QWidget(), "Chat Bot (todo)")
+
+        # Setup system tray icon for desktop notifications
+        icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
+        icon_path_png = os.path.join("assets", "legnedary_astrid_boop_upscale.png")
+        tray_icon = QIcon(icon_path_ico) if os.path.exists(icon_path_ico) else QIcon(icon_path_png)
+        self.tray = QSystemTrayIcon(tray_icon, self)
+        self.tray.setVisible(True)
+        self.tray.setToolTip("Mindful Mäuschen")
+        
+        # Connect the notification button from HomePage
+        self.home_page.desktop_notif.clicked.connect(self.send_desktop_notif)
+        
+        # Check immediately on startup if it's Monday
+        self.check_monday_weight_reminder()
+        
+        # Set up a timer to check every 2 hours throughout the day
+        self.reminder_timer = QTimer(self)
+        self.reminder_timer.timeout.connect(self.check_monday_weight_reminder)
+        self.reminder_timer.start(2 * 60 * 60 * 1000)  # 2 hours in milliseconds
+
+    def check_monday_weight_reminder(self):
+        """Check if it's Monday and if a weight has already been entered for today"""
+        # First check if it's Monday
+        now = datetime.now()
+        if now.strftime("%A") != "Monday":
+            return  # Exit if not Monday
+        
+        # Get today's date
+        today = now.strftime("%Y-%m-%d")
+        
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        
+        # Check if a current_weight entry exists for today
+        c.execute("""
+            SELECT * FROM goals 
+            WHERE updated_date = ? 
+            AND current_weight IS NOT NULL
+        """, (today,))
+        
+        result = c.fetchone()
+        conn.close()
+        
+        # If no weight entry exists for today, send notification
+        if not result:
+            self.send_desktop_notif()
+
+    def send_desktop_notif(self):
+        """Send a native Windows desktop notification"""    
+            # Create native Windows toast notification
+        toast = Notification(
+            app_id="Mindful Mäuschen",
+            title="Boop! 🐭",
+            msg="Its Monday! Don't forget to log your weekly weight!",
+            icon=os.path.abspath("assets/legnedary_astrid_boop_upscale.png") if os.path.exists("assets/legnedary_astrid_boop_upscale.png") else "",
+            duration="long"  # Can be "short" or "long"
+        )
+            
+        toast.set_audio(audio.Default, loop=False)            
+        # Eventually make it so app auto opens on boot up in hidden modeand this will show the window
+        toast.add_actions(label="Open App", launch="") 
+        toast.add_actions(label="Dismiss", launch="")
+        toast.show()
+
+
 
 
 # --- Run App ---
@@ -1135,8 +1206,8 @@ if __name__ == "__main__":
         except Exception:
             pass
     app = QApplication(sys.argv)
-    icon_path_ico = os.path.join("assets", "legendary_boop.ico")
-    icon_path_png = os.path.join("assets", "legendary_boop.png")
+    icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
+    icon_path_png = os.path.join("assets", "legnedary_astrid_boop_upscale.png")
     app_icon = QIcon(icon_path_ico) if os.path.exists(icon_path_ico) else QIcon(icon_path_png)
     app.setWindowIcon(app_icon)
     window = HealthApp()

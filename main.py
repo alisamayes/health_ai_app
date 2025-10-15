@@ -4,13 +4,13 @@ import os
 import sqlite3
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-from PyQt6.QtCore import QDate, Qt, QTimer
-from PyQt6.QtGui import QPixmap, QFont, QIcon
+from PyQt6.QtCore import QDate, Qt, QTimer, QSettings
+from PyQt6.QtGui import QPixmap, QFont, QIcon, QTextOption
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon
+    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -89,11 +89,15 @@ class HomePage(QWidget):
         # Desktop notification test button
         self.desktop_notif = QPushButton("Desktop Notification Test")
 
+        # Startup checkbox
+        self.startup_checkbox = QCheckBox("Launch on Windows startup")
+
         # Add widgets to layout
         self.layout.addWidget(self.logo_label)
         self.layout.addWidget(self.title_label)
         self.layout.addWidget(self.subtitle_label)
         self.layout.addWidget(self.desktop_notif)
+        self.layout.addWidget(self.startup_checkbox)
 
         self.setLayout(self.layout)
 
@@ -951,12 +955,156 @@ class Goals(QWidget):
         self.canvas.flush_events()
         self.canvas.draw()
 
+class MealPlan(QWidget):
+    def __init__(self):
+        super().__init__()
 
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS meal_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Monday TEXT,
+                Tuesday TEXT,
+                Wednesday TEXT,
+                Thursday TEXT,
+                Friday TEXT,
+                Saturday TEXT,
+                Sunday TEXT
+            )
+        """)
+        conn.commit()
+        # Ensure there is exactly one row to update against (id = 1)
+        c.execute("SELECT COUNT(*) FROM meal_plan")
+        count_row = c.fetchone()
+        existing_count = count_row[0] if count_row else 0
+        if existing_count == 0:
+            c.execute(
+                """
+                INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
+                VALUES ('', '', '', '', '', '', '')
+                """
+            )
+            conn.commit()
+        conn.close()
+
+        self.layout = QVBoxLayout()
+        
+        # Days of the week
+        self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        # Create main horizontal layout for all days
+        self.days_layout = QHBoxLayout()
+        self.days_layout.setSpacing(2)  # Minimal spacing between columns
+        self.days_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Create a widget for each day
+        self.day_widgets = []
+        for day in self.days:
+            day_widget = self.create_day_widget(day)
+            self.day_widgets.append(day_widget)
+            # Add stretch to make each day widget expand equally
+            self.days_layout.addWidget(day_widget, 1)  # Stretch factor of 1 for equal distribution
+        
+        # Add the days layout to main layout
+        self.layout.addLayout(self.days_layout)
+        self.setLayout(self.layout)
+
+        self.day_widgets[0].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Monday", self.day_widgets[0].meal_list.toPlainText()))
+        self.day_widgets[1].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Tuesday", self.day_widgets[1].meal_list.toPlainText()))
+        self.day_widgets[2].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Wednesday", self.day_widgets[2].meal_list.toPlainText()))
+        self.day_widgets[3].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Thursday", self.day_widgets[3].meal_list.toPlainText()))
+        self.day_widgets[4].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Friday", self.day_widgets[4].meal_list.toPlainText()))
+        self.day_widgets[5].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Saturday", self.day_widgets[5].meal_list.toPlainText()))
+        self.day_widgets[6].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Sunday", self.day_widgets[6].meal_list.toPlainText()))
+    
+    def create_day_widget(self, day_name):
+        """Create a widget for a single day with header and meal list"""
+        # Main container for the day
+        day_container = QWidget()
+        day_layout = QVBoxLayout()
+        day_container.setLayout(day_layout)
+        
+        # Day header
+        day_header = QLabel(day_name)
+        day_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        day_header.setStyleSheet(f"""
+            QLabel {{
+                color: {white};
+                font-weight: bold;
+                font-size: 14px;
+                padding: 8px;
+                background-color: {border_gray};
+                border-radius: 6px;
+                margin-bottom: 4px;
+                max-height: 20px;
+            }}
+        """)
+        
+        meal_list = QTextEdit()
+        day_text = self.get_day_text_from_db(day_name)
+        if day_text is None or day_text == "":
+            meal_list.setText("• Breakfast\n• Lunch\n• Dinner\n• Snacks")
+        else:
+            meal_list.setText(day_text)
+        meal_list.setStyleSheet(f"""
+                QTextEdit {{
+                color: {white};
+                background-color: {background_dark_gray};
+                border: 1px solid {border_gray};
+                border-radius: 4px;
+                padding: 8px;
+                margin: 2px;
+            }}
+        """)
+        #meal_list.setWordWrap(True)
+        meal_list.setAlignment(Qt.AlignmentFlag.AlignTop)  # Align text to top for better wrapping
+        
+        # Add header and list to day layout with proper stretch
+        day_layout.addWidget(day_header, 0)  # Header doesn't stretch
+        day_layout.addWidget(meal_list, 1)   # Meal list stretches to fill remaining space
+        day_layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins within each day
+        day_layout.setSpacing(2)  # Minimal spacing between header and list
+        
+        # Expose the QTextEdit on the returned widget so callers can access it
+        day_container.meal_list = meal_list
+        return day_container
+
+    def get_day_text_from_db(self, day_name):
+        # Guard against unexpected column name injection by validating against known days
+        if day_name not in self.days:
+            return None
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        # Select explicit column for the single row (id = 1)
+        c.execute(f"SELECT {day_name} FROM meal_plan WHERE id = 1")
+        row = c.fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return row[0]
+
+    def update_day_text_in_db(self, day_name, new_text):
+        if day_name not in self.days:
+            return
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        # Update explicit column for the single row (id = 1)
+        c.execute(f"UPDATE meal_plan SET {day_name} = ? WHERE id = 1", (new_text,))
+        conn.commit()
+        conn.close()
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Initialize QSettings for app preferences
+        self.settings = QSettings("MindfulMauschen", "HealthApp")
+        # Windows startup registry settings
+        self.startup_settings = QSettings(
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            QSettings.Format.NativeFormat
+        )
         self.setWindowTitle("Health Tracker App")
         self.setGeometry(300, 300, 800, 400)
         # Prefer an .ico for Windows taskbar; fallback to PNG if .ico not present
@@ -1114,6 +1262,14 @@ class HealthApp(QMainWindow):
                 padding: 8px 16px;
                 border-radius: 6px;
             }}
+            QCheckBox {{
+                color: {white};
+                background-color: {background_dark_gray};
+            }}
+            QcheckBox:indicator:checked {{
+                color: {white};
+                background-color: {background_dark_gray};
+            }}
         """)
 
         self.tabs = QTabWidget()
@@ -1126,7 +1282,7 @@ class HealthApp(QMainWindow):
         self.tabs.addTab(QWidget(), "Exercise Tracker (todo)")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")
-        self.tabs.addTab(QWidget(), "Meal Plans (todo)")
+        self.tabs.addTab(MealPlan(), "Meal Plans")
         self.tabs.addTab(QWidget(), "Chat Bot (todo)")
 
         # Setup system tray icon for desktop notifications
@@ -1139,6 +1295,11 @@ class HealthApp(QMainWindow):
         
         # Connect the notification button from HomePage
         self.home_page.desktop_notif.clicked.connect(self.send_desktop_notif)
+        
+        # Connect startup checkbox
+        self.home_page.startup_checkbox.stateChanged.connect(self.toggle_startup)
+        # Update checkbox state based on current registry setting
+        self.home_page.startup_checkbox.setChecked(self.is_startup_enabled())
         
         # Check immediately on startup if it's Monday
         self.check_monday_weight_reminder()
@@ -1174,6 +1335,34 @@ class HealthApp(QMainWindow):
         # If no weight entry exists for today, send notification
         if not result:
             self.send_desktop_notif()
+
+    def get_app_path(self):
+        """Get the path to the application executable or script"""
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            return sys.executable
+        else:
+            # Running as Python script
+            return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+    
+    def is_startup_enabled(self):
+        """Check if the app is set to run on Windows startup"""
+        app_name = "MindfulMauschen"
+        return self.startup_settings.contains(app_name)
+    
+    def toggle_startup(self, state):
+        """Enable or disable app launch on Windows startup"""
+        app_name = "MindfulMauschen"
+        
+        if state == Qt.CheckState.Checked.value:
+            # Add to startup
+            app_path = self.get_app_path()
+            self.startup_settings.setValue(app_name, app_path)
+            self.startup_settings.sync()
+        else:
+            # Remove from startup
+            self.startup_settings.remove(app_name)
+            self.startup_settings.sync()
 
     def send_desktop_notif(self):
         """Send a native Windows desktop notification"""    

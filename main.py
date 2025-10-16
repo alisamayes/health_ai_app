@@ -44,6 +44,14 @@ def init_db():
             entry_date TEXT NOT NULL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS exercise (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity TEXT NOT NULL,
+            calories INTEGER NOT NULL,
+            entry_date TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -307,6 +315,211 @@ class CalorieTracker(QWidget):
             if row_index < len(rows):
                 record_id = rows[row_index][0]  # Get the ID from the database query
                 c.execute("DELETE FROM calories WHERE id = ?", (record_id,))
+
+        conn.commit()
+        conn.close()
+
+        self.load_entries()
+
+class ExerciseTracker(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+       
+        # Date selector section for picking which date to show calorie and food entries for
+        self.date_selector = QDateEdit(calendarPopup=True)
+        self.date_selector.setDate(QDate.currentDate())
+        self.date_selector.setDisplayFormat("dd-MM-yyyy")
+        self.date_selector.dateChanged.connect(self.load_entries)
+        self.back_day_button = QPushButton("<")
+        self.back_day_button.setFixedSize(30, 25)
+        self.back_day_button.setObjectName("navigationBtn") # Navigation buttons are smaller than the other buttons in the styling to fit the < and > symbols. Thus needs a special identifier.
+        self.back_day_button.clicked.connect(self.back_day)
+        self.next_day_button = QPushButton(">")
+        self.next_day_button.setFixedSize(30, 25)
+        self.next_day_button.setObjectName("navigationBtn")
+        self.next_day_button.clicked.connect(self.next_day)
+
+        date_layout = QHBoxLayout()
+        date_layout.addWidget(QLabel("Select Date:"))
+        date_layout.addWidget(self.back_day_button)
+        date_layout.addWidget(self.date_selector)
+        date_layout.addWidget(self.next_day_button)
+
+
+        # Input section for adding and removing food and calorie entries
+        self.activity_input = QLineEdit()
+        self.activity_input.setPlaceholderText("Enter activity name")
+        self.calorie_input = QLineEdit()
+        self.calorie_input.setPlaceholderText("Enter calories burned")
+
+        self.add_button = QPushButton("Add Entry")
+        self.remove_button = QPushButton("Remove Entry")
+        self.add_button.clicked.connect(self.add_entry)
+        self.remove_button.clicked.connect(self.remove_entry)
+
+        input_layout = QHBoxLayout()
+        input_layout.addWidget(self.activity_input)
+        input_layout.addWidget(self.calorie_input)
+        input_layout.addWidget(self.add_button)
+        input_layout.addWidget(self.remove_button)
+
+       
+
+        # Table section to show entries for a given date
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Activity", "Calories"])
+        
+        # Enable automatic column resizing to fit content
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, self.table.horizontalHeader().ResizeMode.Stretch) 
+        self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.ResizeToContents) 
+        self.table.setWordWrap(True) # Enable word wrapping for long activity names
+        self.table.setColumnWidth(1, 80) # Set minimum column widths
+        
+        # Enable keyboard focus and selection
+        self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
+
+        # Section for showing total daily calorie intake for a given date
+        self.calorie_label = QLabel("Daily Calories Burned:")
+        self.calorie_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+
+        # Add to layout
+        self.layout.addLayout(date_layout)
+        self.layout.addLayout(input_layout)
+        self.layout.addWidget(self.table)
+        self.layout.addWidget(self.calorie_label)
+        self.setLayout(self.layout)
+
+        # Load existing data
+        self.load_entries()
+
+    def add_entry(self):
+        activity = self.activity_input.text()
+        try:
+            calories = int(self.calorie_input.text())
+        except ValueError:
+            return  # Ignore if calories is not a number
+
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("INSERT INTO exercise (activity, calories, entry_date) VALUES (?, ?, ?)",
+                  (activity, calories, date_str))
+        conn.commit()
+        conn.close()
+
+        self.activity_input.clear()
+        self.calorie_input.clear()
+        self.load_entries()
+
+    def remove_entry(self):
+        row_count = self.table.rowCount()
+        if row_count == 0:
+            QMessageBox.information(self, "Remove Entry", "There are no entries to remove.")
+            return
+
+        # Ask user for row number
+        row_number, ok = QInputDialog.getInt(
+            self,
+            "Remove Entry",
+            f"Enter row number to remove (1 - {row_count}):",
+            1, 1, row_count, 1
+        )
+        if not ok:
+            return
+
+        # Get IDs for this date only
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("SELECT id FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
+        ids = [row[0] for row in c.fetchall()]
+
+        index = row_number - 1
+        if index < 0 or index >= len(ids):
+            conn.close()
+            QMessageBox.warning(self, "Remove Entry", "Invalid row number.")
+            return
+
+        target_id = ids[index]
+        c.execute("DELETE FROM exercise WHERE id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+
+        self.load_entries()
+
+    def back_day(self):
+        self.date_selector.setDate(self.date_selector.date().addDays(-1))
+        self.load_entries()
+    
+    def next_day(self):
+        self.date_selector.setDate(self.date_selector.date().addDays(1))
+        self.load_entries()
+
+    def load_entries(self):
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        c.execute("SELECT activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
+        rows = c.fetchall()
+        conn.close()
+
+        self.table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            self.table.setItem(i, 0, QTableWidgetItem(row[0]))
+            self.table.setItem(i, 1, QTableWidgetItem(str(row[1])))
+
+        # Resize columns to fit content after loading data
+        self.table.resizeColumnsToContents()
+
+        # Update total calories label
+        total_calories = sum(row[1] for row in rows) if rows else 0
+        selected_date_display = self.date_selector.date().toString("dd-MM-yyyy")
+        self.calorie_label.setText(f"Daily Calories ({selected_date_display}): {total_calories}")
+
+    def keyPressEvent(self, event):
+        """Handle keyboard press of the DEL button"""
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_selected_rows()
+        else:
+            # Pass other key events to the parent class
+            super().keyPressEvent(event)
+
+    def delete_selected_rows(self):
+        """Deletes the selected row from the database"""
+        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
+        if not selected_rows:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Confirmation",
+            f"Delete {len(selected_rows)} record(s) from database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+        
+        # Get all records for this date with their IDs
+        c.execute("SELECT id, activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
+        rows = c.fetchall()
+
+        # Delete the selected records
+        for row_index in selected_rows:
+            if row_index < len(rows):
+                record_id = rows[row_index][0]  # Get the ID from the database query
+                c.execute("DELETE FROM exercise WHERE id = ?", (record_id,))
 
         conn.commit()
         conn.close()
@@ -1027,19 +1240,8 @@ class MealPlan(QWidget):
         
         # Day header
         day_header = QLabel(day_name)
+        day_header.setObjectName("headerLabel")
         day_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        day_header.setStyleSheet(f"""
-            QLabel {{
-                color: {white};
-                font-weight: bold;
-                font-size: 14px;
-                padding: 8px;
-                background-color: {border_gray};
-                border-radius: 6px;
-                margin-bottom: 4px;
-                max-height: 20px;
-            }}
-        """)
         
         meal_list = QTextEdit()
         day_text = self.get_day_text_from_db(day_name)
@@ -1047,17 +1249,6 @@ class MealPlan(QWidget):
             meal_list.setText("• Breakfast\n• Lunch\n• Dinner\n• Snacks")
         else:
             meal_list.setText(day_text)
-        meal_list.setStyleSheet(f"""
-                QTextEdit {{
-                color: {white};
-                background-color: {background_dark_gray};
-                border: 1px solid {border_gray};
-                border-radius: 4px;
-                padding: 8px;
-                margin: 2px;
-            }}
-        """)
-        #meal_list.setWordWrap(True)
         meal_list.setAlignment(Qt.AlignmentFlag.AlignTop)  # Align text to top for better wrapping
         
         # Add header and list to day layout with proper stretch
@@ -1270,6 +1461,24 @@ class HealthApp(QMainWindow):
                 color: {white};
                 background-color: {background_dark_gray};
             }}
+            QLabel#headerLabel {{
+                color: {white};
+                font-weight: bold;
+                font-size: 14px;
+                padding: 8px;
+                background-color: {border_gray};
+                border-radius: 6px;
+                margin-bottom: 4px;
+                max-height: 20px;
+            }}
+            QTextEdit {{
+                color: {white};
+                background-color: {background_dark_gray};
+                border: 1px solid {border_gray};
+                border-radius: 4px;
+                padding: 8px;
+                margin: 2px;
+            }}
         """)
 
         self.tabs = QTabWidget()
@@ -1279,7 +1488,7 @@ class HealthApp(QMainWindow):
         self.home_page = HomePage()
         self.tabs.addTab(self.home_page, "Home")
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
-        self.tabs.addTab(QWidget(), "Exercise Tracker (todo)")
+        self.tabs.addTab(ExerciseTracker(), "Exercise Tracker")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")
         self.tabs.addTab(MealPlan(), "Meal Plans")

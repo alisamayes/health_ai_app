@@ -52,6 +52,26 @@ def init_db():
             entry_date TEXT NOT NULL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            current_weight REAL,
+            target_weight REAL,
+            updated_date TEXT NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS meal_plan (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Monday TEXT,
+            Tuesday TEXT,
+            Wednesday TEXT,
+            Thursday TEXT,
+            Friday TEXT,
+            Saturday TEXT,
+            Sunday TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -629,6 +649,8 @@ class Graphs(QWidget):
 
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
+        
+        # Fetch food calorie data
         if start_str is None:
             c.execute(
                 """
@@ -649,15 +671,49 @@ class Graphs(QWidget):
                 """,
                 (start_str, end_str),
             )
-        rows = c.fetchall()
+        food_rows = c.fetchall()
+        
+        # Fetch exercise calorie data
+        if start_str is None:
+            c.execute(
+                """
+                SELECT entry_date, SUM(calories) AS total
+                FROM exercise
+                GROUP BY entry_date
+                ORDER BY entry_date ASC
+                """
+            )
+        else:
+            c.execute(
+                """
+                SELECT entry_date, SUM(calories) AS total
+                FROM exercise
+                WHERE entry_date BETWEEN ? AND ?
+                GROUP BY entry_date
+                ORDER BY entry_date ASC
+                """,
+                (start_str, end_str),
+            )
+        exercise_rows = c.fetchall()
         conn.close()
 
         # Build a continuous date range and fill missing days with zero
-        date_to_total = {r[0]: r[1] for r in rows}
+        calorie_date_to_total = {r[0]: r[1] for r in food_rows}
+        exercise_date_to_total = {r[0]: r[1] for r in exercise_rows}
+        
         if start_str is None:
-            if rows:
-                start_date = datetime.strptime(rows[0][0], "%Y-%m-%d").date()
-                end_date = datetime.strptime(rows[-1][0], "%Y-%m-%d").date()
+            if food_rows or exercise_rows:
+                all_dates = []
+                if food_rows:
+                    all_dates.extend([r[0] for r in food_rows])
+                if exercise_rows:
+                    all_dates.extend([r[0] for r in exercise_rows])
+                if all_dates:
+                    start_date = min(datetime.strptime(d, "%Y-%m-%d").date() for d in all_dates)
+                    end_date = max(datetime.strptime(d, "%Y-%m-%d").date() for d in all_dates)
+                else:
+                    start_date = datetime.today().date()
+                    end_date = start_date
             else:
                 start_date = datetime.today().date()
                 end_date = start_date
@@ -666,25 +722,40 @@ class Graphs(QWidget):
             end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
 
         dates = []
-        totals = []
+        food_totals = []
+        exercise_totals = []
+        overburn = []
         current = start_date
+        index = 0
         while current <= end_date:
             key = current.strftime("%Y-%m-%d")
             dates.append(key)
-            totals.append(date_to_total.get(key, 0))
+            food_totals.append(calorie_date_to_total.get(key, 0))
+            exercise_totals.append(exercise_date_to_total.get(key, 0) * -1)
+            if food_totals[index] + exercise_totals[index] < 0:
+                overburn.append(food_totals[index] + exercise_totals[index])
+                exercise_totals[index] -= overburn[index]
+            else:
+                overburn.append(0)
             current += timedelta(days=1)
+            index += 1
 
         # Prepare display labels in dd-MM-yyyy
         display_dates = [datetime.strptime(d, "%Y-%m-%d").strftime("%d-%m-%Y") for d in dates]
 
         self.graph.clear()
         if dates:
-            self.graph.plot(dates, totals, marker='o', color= active_dark_green, linewidth=2)
-            self.graph.fill_between(range(len(totals)), totals, color= active_dark_green, alpha=0.15)
-            self.graph.set_title("Daily Calories", color="#ffffff")
+            # Plot data as bar charts
+            self.graph.bar(dates, food_totals, color=active_dark_green, alpha=0.7, label='Calories Intake')
+            self.graph.bar(dates, exercise_totals, color="#f01313", alpha=0.7, bottom=food_totals, label='Calorie Burned')
+            self.graph.bar(dates, overburn, color="#d47a2c", alpha=0.7, label='Overburn')
+
+            self.graph.set_title("Daily Calories - Consumed vs Burned", color="#ffffff")
             self.graph.set_xlabel("Date", color="#ffffff")
             self.graph.set_ylabel("Calories", color="#ffffff")
             self.graph.grid(True, linestyle='--', alpha=0.3)
+            self.graph.legend()
+            
             # Label x-axis only when number of points is manageable
             if len(dates) <= 20:
                 self.graph.set_xticks(range(len(dates)))
@@ -771,14 +842,6 @@ class Goals(QWidget):
             # Save to database
             conn = sqlite3.connect("health_app.db")
             c = conn.cursor()
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS goals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    current_weight REAL,
-                    target_weight REAL,
-                    updated_date TEXT NOT NULL
-                )
-            """)
             c.execute("INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
                      (weight, datetime.now().strftime("%Y-%m-%d")))
             conn.commit()
@@ -809,14 +872,6 @@ class Goals(QWidget):
             # Save to database
             conn = sqlite3.connect("health_app.db")
             c = conn.cursor()
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS goals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    current_weight REAL,
-                    target_weight REAL,
-                    updated_date TEXT NOT NULL
-                )
-            """)
             c.execute("INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
                      (weight, datetime.now().strftime("%Y-%m-%d")))
             conn.commit()
@@ -842,16 +897,7 @@ class Goals(QWidget):
         """Reload the page so the current and target weight buttons reflect the respective 
         values in the database and the loss value label shows the difference."""
         conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS goals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                current_weight REAL,
-                target_weight REAL,
-                updated_date TEXT NOT NULL
-            )
-        """)
-        
+        c = conn.cursor()       
         # Get latest current weight
         c.execute("SELECT current_weight FROM goals WHERE current_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
         current_row = c.fetchone()
@@ -1174,19 +1220,6 @@ class MealPlan(QWidget):
 
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS meal_plan (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                Monday TEXT,
-                Tuesday TEXT,
-                Wednesday TEXT,
-                Thursday TEXT,
-                Friday TEXT,
-                Saturday TEXT,
-                Sunday TEXT
-            )
-        """)
-        conn.commit()
         # Ensure there is exactly one row to update against (id = 1)
         c.execute("SELECT COUNT(*) FROM meal_plan")
         count_row = c.fetchone()

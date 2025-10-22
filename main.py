@@ -1,11 +1,10 @@
-from cProfile import label
 import sys
 import os
 import sqlite3
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from PyQt6.QtCore import QDate, Qt, QTimer, QSettings
-from PyQt6.QtGui import QPixmap, QFont, QIcon, QTextOption
+from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -15,6 +14,11 @@ from PyQt6.QtWidgets import (
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from winotify import Notification, audio
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
 
 """
 This is the starter file for an AI-driven self health and tracking app I am working on, using Python for the main part, PyQt for the GUI and SQLite for the database
@@ -26,13 +30,14 @@ Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = ["exercise tracker", "graphs of both over time period", "meal plan/ ideas", "AI suggested meal substitues", "desktop promts/ reminders"]
-extra_todo_list = ["exercise calorie calculator based on input factors", "goal advice", "sleep diary", "AI chat bot for health advice", "health by day trends", "AI driven improvements", "mobile support", "weekly weigh in reminders", "silent auto open app on bootup"]
-completed_todo_list = ["Calorie tracker", "app styling", "weight goal", "basic desktop notifcations"]
+core_todo_list = [ "AI suggested meal substitues", "desktop promts"]
+extra_todo_list = ["calorie suggestions based on input factors", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
+completed_todo_list = ["Calorie tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
 """
 
 
 # --- Database Setup ---
+# Initilise the various database tables for the app if they dont yet exist
 def init_db():
     conn = sqlite3.connect("health_app.db")
     c = conn.cursor()
@@ -76,7 +81,7 @@ def init_db():
     conn.close()
 
 
-# Global Variables for the styling
+# Global Variables for the styling to make more human readable
 white = "#ffffff"
 background_dark_gray = "#2b2b2b"
 border_gray = "#404040"
@@ -113,19 +118,12 @@ class HomePage(QWidget):
         subtitle_font = QFont()
         subtitle_font.setPointSize(12)
         self.subtitle_label.setFont(subtitle_font)
-
-        # Desktop notification test button
-        self.desktop_notif = QPushButton("Desktop Notification Test")
-
-        # Startup checkbox
-        self.startup_checkbox = QCheckBox("Launch on Windows startup")
+        
 
         # Add widgets to layout
         self.layout.addWidget(self.logo_label)
         self.layout.addWidget(self.title_label)
         self.layout.addWidget(self.subtitle_label)
-        self.layout.addWidget(self.desktop_notif)
-        self.layout.addWidget(self.startup_checkbox)
 
         self.setLayout(self.layout)
 
@@ -1236,7 +1234,7 @@ class MealPlan(QWidget):
 
         self.layout = QVBoxLayout()
         
-        # Days of the week
+        # One widget for each day of the week
         self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         
         # Create main horizontal layout for all days
@@ -1317,6 +1315,156 @@ class MealPlan(QWidget):
         c.execute(f"UPDATE meal_plan SET {day_name} = ? WHERE id = 1", (new_text,))
         conn.commit()
         conn.close()
+
+class ChatBot(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+        self.chat_area = QTextEdit()
+        self.chat_area.setReadOnly(True)
+        self.input_field = QTextEdit()
+        self.input_field.setMaximumHeight(40)  # Start with single line height
+        self.input_field.textChanged.connect(self.adjust_input_height)
+        self.send_button = QPushButton("Send")
+
+        self.layout.addWidget(self.chat_area)
+        self.layout.addWidget(self.input_field)
+        self.layout.addWidget(self.send_button)
+        self.setLayout(self.layout)
+
+        self.send_button.clicked.connect(self.handle_send)
+
+    def adjust_input_height(self):
+        """Adjust the input field height based on content"""
+        # Calculate the height needed for the content
+        doc = self.input_field.document()
+        doc_height = doc.size().height()
+        
+        # Get the font metrics to calculate proper line height
+        font_metrics = self.input_field.fontMetrics()
+        line_height = font_metrics.height()
+        
+        # Set a reasonable minimum and maximum height
+        min_height = 40  # Single line
+        max_height = 120  # About 4-5 lines max
+        
+        # Calculate the new height with proper line spacing and padding
+        # Add extra padding to ensure the full line is visible
+        new_height = max(min_height, min(doc_height + line_height + 10, max_height))
+        
+        # Update the height
+        self.input_field.setMaximumHeight(int(new_height))
+
+    def handle_send(self):
+        user_message = self.input_field.text().strip()
+        if not user_message:
+            return
+
+        self.chat_area.append(f"You: {user_message}")
+        self.input_field.clear()
+
+        ai_reply = self.ask_ai(user_message)
+        self.chat_area.append(f"AI: {ai_reply}\n")
+
+    def ask_ai(self, prompt):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a health assistant. Provide practical advice and meal suggestions. Be friendly and informative."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+
+class Settings(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+        
+        # Initialize QSettings for persistent settings
+        self.settings = QSettings("MindfulMauschen", "HealthApp")
+
+        
+        # Toggle checkboxes section
+        self.startup_checkbox = QCheckBox("Enable app auto launch on Windows startup")
+        self.food_ai_checkbox = QCheckBox("Enable AI assisted calorie suggestions when inputting food into the tracker")
+        self.exercise_ai_checkbox = QCheckBox("Enable AI assisted calorie suggestions when inputting exercise into the tracker")
+        self.silent_notif_checkbox = QCheckBox("Make desktop notifications silent")
+        
+        # Desktop notification test button
+        self.desktop_notif = QPushButton("Desktop Notification Test")
+        
+        # Connect checkbox state changes to save settings (except startup which is handled separately)
+        self.food_ai_checkbox.stateChanged.connect(self.save_settings)
+        self.exercise_ai_checkbox.stateChanged.connect(self.save_settings)
+        self.silent_notif_checkbox.stateChanged.connect(self.save_settings)
+        
+        # Add widgets to layout
+        self.layout.addWidget(self.startup_checkbox)
+        self.layout.addWidget(self.food_ai_checkbox)
+        self.layout.addWidget(self.exercise_ai_checkbox)
+        self.layout.addWidget(self.silent_notif_checkbox)
+        self.layout.addWidget(self.desktop_notif)
+        
+        # Load saved settings
+        self.load_settings()
+    
+    def get_app_path(self):
+        """Get the path to the application executable or script"""
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            return sys.executable
+        else:
+            # Running as Python script
+            return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+    
+    def is_startup_enabled(self, startup_settings):
+        """Check if the app is set to run on Windows startup"""
+        app_name = "MindfulMauschen"
+        return startup_settings.contains(app_name)
+    
+    def toggle_startup(self, state, startup_settings):
+        """Enable or disable app launch on Windows startup"""
+        app_name = "MindfulMauschen"
+        
+        if state == Qt.CheckState.Checked.value:
+            # Add to startup
+            app_path = self.get_app_path()
+            startup_settings.setValue(app_name, app_path)
+            startup_settings.sync()
+        else:
+            # Remove from startup
+            startup_settings.remove(app_name)
+            startup_settings.sync()
+    
+    def load_settings(self):
+        """Load saved settings and apply them to checkboxes"""
+        # Load checkbox states (default to False if not found)
+        self.startup_checkbox.setChecked(
+            self.settings.value("startup_enabled", False, type=bool)
+        )
+        self.food_ai_checkbox.setChecked(
+            self.settings.value("food_ai_enabled", False, type=bool)
+        )
+        self.exercise_ai_checkbox.setChecked(
+            self.settings.value("exercise_ai_enabled", False, type=bool)
+        )
+        self.silent_notif_checkbox.setChecked(
+            self.settings.value("silent_notif_enabled", False, type=bool)
+        )
+    
+    def save_settings(self):
+        """Save current checkbox states to persistent storage"""
+        self.settings.setValue("food_ai_enabled", self.food_ai_checkbox.isChecked())
+        self.settings.setValue("exercise_ai_enabled", self.exercise_ai_checkbox.isChecked())
+        self.settings.setValue("silent_notif_enabled", self.silent_notif_checkbox.isChecked())
+        self.settings.sync()
+    
+    def save_startup_setting(self):
+        """Save startup checkbox state separately"""
+        self.settings.setValue("startup_enabled", self.startup_checkbox.isChecked())
+        self.settings.sync()
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
@@ -1519,13 +1667,15 @@ class HealthApp(QMainWindow):
 
         # Add tabs
         self.home_page = HomePage()
+        self.Settings = Settings()
         self.tabs.addTab(self.home_page, "Home")
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
         self.tabs.addTab(ExerciseTracker(), "Exercise Tracker")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")
         self.tabs.addTab(MealPlan(), "Meal Plans")
-        self.tabs.addTab(QWidget(), "Chat Bot (todo)")
+        self.tabs.addTab(ChatBot(), "Chat Bot")
+        self.tabs.addTab(self.Settings, "Settings")
 
         # Setup system tray icon for desktop notifications
         icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
@@ -1536,75 +1686,68 @@ class HealthApp(QMainWindow):
         self.tray.setToolTip("Mindful Mäuschen")
         
         # Connect the notification button from HomePage
-        self.home_page.desktop_notif.clicked.connect(self.send_desktop_notif)
+        self.Settings.desktop_notif.clicked.connect(self.send_desktop_notif)
         
-        # Connect startup checkbox
-        self.home_page.startup_checkbox.stateChanged.connect(self.toggle_startup)
-        # Update checkbox state based on current registry setting
-        self.home_page.startup_checkbox.setChecked(self.is_startup_enabled())
+        # Connect startup checkbox from Settings
+        self.Settings.startup_checkbox.stateChanged.connect(
+            lambda state: self.handle_startup_toggle(state)
+        )
+        # Update Windows startup registry based on persistent setting
+        self.update_windows_startup()
         
-        # Check immediately on startup if it's Monday
-        self.check_monday_weight_reminder()
+        # Check immediately on startup if there is a weight input for this week
+        self.check_weekly_weight_reminder()
         
         # Set up a timer to check every 2 hours throughout the day
         self.reminder_timer = QTimer(self)
-        self.reminder_timer.timeout.connect(self.check_monday_weight_reminder)
+        self.reminder_timer.timeout.connect(self.check_weekly_weight_reminder)
         self.reminder_timer.start(2 * 60 * 60 * 1000)  # 2 hours in milliseconds
 
-    def check_monday_weight_reminder(self):
-        """Check if it's Monday and if a weight has already been entered for today"""
-        # First check if it's Monday
+    def handle_startup_toggle(self, state):
+        """Handle startup checkbox state change"""
+        # Update Windows startup registry based on checkbox state
+        self.Settings.toggle_startup(state, self.startup_settings)
+        # Save the startup setting to persistent storage
+        self.Settings.save_startup_setting()
+    
+    def update_windows_startup(self):
+        """Update Windows startup registry based on persistent setting"""
+        startup_enabled = self.Settings.startup_checkbox.isChecked()
+        if startup_enabled:
+            app_path = self.Settings.get_app_path()
+            self.startup_settings.setValue("MindfulMauschen", app_path)
+        else:
+            self.startup_settings.remove("MindfulMauschen")
+        self.startup_settings.sync()
+
+    def check_weekly_weight_reminder(self):
+        """Check if a weight has already been entered for this week"""
         now = datetime.now()
-        if now.strftime("%A") != "Monday":
-            return  # Exit if not Monday
+        # Calculate the start of the current week (Monday)
+        days_since_monday = now.weekday()  # Monday is 0, Sunday is 6
+        week_start = now - timedelta(days=days_since_monday)
+        week_start_str = week_start.strftime("%Y-%m-%d")
         
-        # Get today's date
-        today = now.strftime("%Y-%m-%d")
+        # Calculate the end of the current week (Sunday)
+        week_end = week_start + timedelta(days=6)
+        week_end_str = week_end.strftime("%Y-%m-%d")
         
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
         
-        # Check if a current_weight entry exists for today
+        # Check if a current_weight entry exists for this week (Monday to Sunday)
         c.execute("""
             SELECT * FROM goals 
-            WHERE updated_date = ? 
+            WHERE updated_date BETWEEN ? AND ?
             AND current_weight IS NOT NULL
-        """, (today,))
+        """, (week_start_str, week_end_str))
         
         result = c.fetchone()
         conn.close()
         
-        # If no weight entry exists for today, send notification
+        # If no weight entry exists for this week, send notification
         if not result:
             self.send_desktop_notif()
-
-    def get_app_path(self):
-        """Get the path to the application executable or script"""
-        if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            return sys.executable
-        else:
-            # Running as Python script
-            return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
-    
-    def is_startup_enabled(self):
-        """Check if the app is set to run on Windows startup"""
-        app_name = "MindfulMauschen"
-        return self.startup_settings.contains(app_name)
-    
-    def toggle_startup(self, state):
-        """Enable or disable app launch on Windows startup"""
-        app_name = "MindfulMauschen"
-        
-        if state == Qt.CheckState.Checked.value:
-            # Add to startup
-            app_path = self.get_app_path()
-            self.startup_settings.setValue(app_name, app_path)
-            self.startup_settings.sync()
-        else:
-            # Remove from startup
-            self.startup_settings.remove(app_name)
-            self.startup_settings.sync()
 
     def send_desktop_notif(self):
         """Send a native Windows desktop notification"""    
@@ -1612,12 +1755,13 @@ class HealthApp(QMainWindow):
         toast = Notification(
             app_id="Mindful Mäuschen",
             title="Boop! 🐭",
-            msg="Its Monday! Don't forget to log your weekly weight!",
+            msg="Beep Boop!Don't forget to log your weight for this week!",
             icon=os.path.abspath("assets/legnedary_astrid_boop_upscale.png") if os.path.exists("assets/legnedary_astrid_boop_upscale.png") else "",
             duration="long"  # Can be "short" or "long"
         )
             
-        toast.set_audio(audio.Default, loop=False)            
+        if not self.Settings.silent_notif_checkbox.isChecked():
+            toast.set_audio(audio.Default, loop=False)            
         # Eventually make it so app auto opens on boot up in hidden modeand this will show the window
         toast.add_actions(label="Open App", launch="") 
         toast.add_actions(label="Dismiss", launch="")

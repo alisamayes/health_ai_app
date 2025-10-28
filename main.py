@@ -1240,6 +1240,96 @@ class Goals(QWidget):
         self.canvas.flush_events()
         self.canvas.draw()
 
+class DayWidget(QWidget):
+    """
+    This class represents a single day widget in the meal plan.
+    It contains a header label for the day name and a QTextEdit for the meal list.
+    The meal list is automatically saved to the database when changed.
+    """
+    def __init__(self, day_name, valid_days):
+        super().__init__()
+        self.day_name = day_name
+        self.valid_days = valid_days
+        
+        # Create layout for the day widget
+        day_layout = QVBoxLayout()
+        self.setLayout(day_layout)
+        
+        # Day header
+        self.day_header = QPushButton(day_name)
+        self.day_header.clicked.connect(self.show_AI_meal_plan_popup)
+        
+        # Meal list text editor
+        self.meal_list = QTextEdit()
+        day_text = self.get_day_text_from_db()
+        if day_text is None or day_text == "":
+            self.meal_list.setText("• Breakfast\n• Lunch\n• Dinner\n• Snacks")
+        else:
+            self.meal_list.setText(day_text)
+        self.meal_list.setAlignment(Qt.AlignmentFlag.AlignTop)  # Align text to top for better wrapping
+        
+        # Connect textChanged signal to save to database
+        self.meal_list.textChanged.connect(self.on_text_changed)
+        
+        # Add header and list to day layout with proper stretch
+        day_layout.addWidget(self.day_header, 0)  # Header doesn't stretch
+        day_layout.addWidget(self.meal_list, 1)   # Meal list stretches to fill remaining space
+        day_layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins within each day
+        day_layout.setSpacing(2)  # Minimal spacing between header and list
+    
+    def show_AI_meal_plan_popup(self):
+        """Show a popup to have AI suggest meals for the day or alternatives to the current meal list for that day."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("AI Meal Plan Suggestions")
+        msg_box.setText("Would you like to use the OpenAI feature to suggest a meal plan for the day?.")
+
+        Yes_button = msg_box.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
+        No_button = msg_box.addButton("No", QMessageBox.ButtonRole.RejectRole)
+        
+        msg_box.exec()
+
+        clicked_button = msg_box.clickedButton()
+
+        if clicked_button == Yes_button:
+            self.ai_suggest_day_meal_plan()
+        elif clicked_button == No_button:
+            return
+
+    def ai_suggest_day_meal_plan(self):
+        """Suggest a meal plan for the day using AI"""
+        pass
+    
+    def get_day_text_from_db(self):
+        """Load the meal text for this day from the database"""
+        # Guard against unexpected column name injection by validating against known days
+        if self.day_name not in self.valid_days:
+            return None
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        # Select explicit column for the single row (id = 1)
+        c.execute(f"SELECT {self.day_name} FROM meal_plan WHERE id = 1")
+        row = c.fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return row[0]
+    
+    def on_text_changed(self):
+        """Handle text changes and save to database"""
+        new_text = self.meal_list.toPlainText()
+        self.update_day_text_in_db(new_text)
+    
+    def update_day_text_in_db(self, new_text):
+        """Update the meal text for this day in the database"""
+        if self.day_name not in self.valid_days:
+            return
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+        # Update explicit column for the single row (id = 1)
+        c.execute(f"UPDATE meal_plan SET {self.day_name} = ? WHERE id = 1", (new_text,))
+        conn.commit()
+        conn.close()
+
 class MealPlan(QWidget):
     """
     This class creates the meal plan page of the app.
@@ -1249,6 +1339,9 @@ class MealPlan(QWidget):
     """
     def __init__(self):
         super().__init__()
+        
+        # Initialize QSettings for persistent settings
+        self.settings = QSettings("MindfulMauschen", "HealthApp")
 
         conn = sqlite3.connect("health_app.db")
         c = conn.cursor()
@@ -1279,76 +1372,26 @@ class MealPlan(QWidget):
         # Create a widget for each day
         self.day_widgets = []
         for day in self.days:
-            day_widget = self.create_day_widget(day)
+            day_widget = DayWidget(day, self.days)
             self.day_widgets.append(day_widget)
             # Add stretch to make each day widget expand equally
             self.days_layout.addWidget(day_widget, 1)  # Stretch factor of 1 for equal distribution
+
         
         # Add the days layout to main layout
         self.layout.addLayout(self.days_layout)
         self.setLayout(self.layout)
 
-        self.day_widgets[0].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Monday", self.day_widgets[0].meal_list.toPlainText()))
-        self.day_widgets[1].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Tuesday", self.day_widgets[1].meal_list.toPlainText()))
-        self.day_widgets[2].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Wednesday", self.day_widgets[2].meal_list.toPlainText()))
-        self.day_widgets[3].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Thursday", self.day_widgets[3].meal_list.toPlainText()))
-        self.day_widgets[4].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Friday", self.day_widgets[4].meal_list.toPlainText()))
-        self.day_widgets[5].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Saturday", self.day_widgets[5].meal_list.toPlainText()))
-        self.day_widgets[6].meal_list.textChanged.connect(lambda: self.update_day_text_in_db("Sunday", self.day_widgets[6].meal_list.toPlainText()))
+        # If the meal plan AI is disabled, make the daywidgets headers buttons disabled 
+        self.update_header_buttons_state()
     
-    def create_day_widget(self, day_name):
-        """Create a widget for a single day with header and meal list"""
-        # Main container for the day
-        day_container = QWidget()
-        day_layout = QVBoxLayout()
-        day_container.setLayout(day_layout)
-        
-        # Day header
-        day_header = QLabel(day_name)
-        day_header.setObjectName("headerLabel")
-        day_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        meal_list = QTextEdit()
-        day_text = self.get_day_text_from_db(day_name)
-        if day_text is None or day_text == "":
-            meal_list.setText("• Breakfast\n• Lunch\n• Dinner\n• Snacks")
-        else:
-            meal_list.setText(day_text)
-        meal_list.setAlignment(Qt.AlignmentFlag.AlignTop)  # Align text to top for better wrapping
-        
-        # Add header and list to day layout with proper stretch
-        day_layout.addWidget(day_header, 0)  # Header doesn't stretch
-        day_layout.addWidget(meal_list, 1)   # Meal list stretches to fill remaining space
-        day_layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins within each day
-        day_layout.setSpacing(2)  # Minimal spacing between header and list
-        
-        # Expose the QTextEdit on the returned widget so callers can access it
-        day_container.meal_list = meal_list
-        return day_container
+    def update_header_buttons_state(self):
+        """Update the enabled/disabled state of day header buttons based on meal plan AI setting"""
+        meal_plan_ai_enabled = self.settings.value("meal_plan_ai_enabled", False, type=bool)
+        for day_widget in self.day_widgets:
+            day_widget.day_header.setEnabled(meal_plan_ai_enabled)
 
-    def get_day_text_from_db(self, day_name):
-        # Guard against unexpected column name injection by validating against known days
-        if day_name not in self.days:
-            return None
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        # Select explicit column for the single row (id = 1)
-        c.execute(f"SELECT {day_name} FROM meal_plan WHERE id = 1")
-        row = c.fetchone()
-        conn.close()
-        if row is None:
-            return None
-        return row[0]
 
-    def update_day_text_in_db(self, day_name, new_text):
-        if day_name not in self.days:
-            return
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        # Update explicit column for the single row (id = 1)
-        c.execute(f"UPDATE meal_plan SET {day_name} = ? WHERE id = 1", (new_text,))
-        conn.commit()
-        conn.close()
 
 class AIWorker(QObject):
     """
@@ -1515,6 +1558,7 @@ class Settings(QWidget):
         self.startup_checkbox = QCheckBox("Enable app auto launch on Windows startup")
         self.food_ai_checkbox = QCheckBox("Enable AI assisted calorie suggestions when inputting food into the tracker")
         self.exercise_ai_checkbox = QCheckBox("Enable AI assisted calorie suggestions when inputting exercise into the tracker")
+        self.meal_plan_ai_checkbox = QCheckBox("Enable AI assisted meal plan suggestions")
         self.silent_notif_checkbox = QCheckBox("Make desktop notifications silent")
         
         # Desktop notification test button
@@ -1523,12 +1567,14 @@ class Settings(QWidget):
         # Connect checkbox state changes to save settings (except startup which is handled separately)
         self.food_ai_checkbox.stateChanged.connect(self.save_settings)
         self.exercise_ai_checkbox.stateChanged.connect(self.save_settings)
+        self.meal_plan_ai_checkbox.stateChanged.connect(self.save_settings)
         self.silent_notif_checkbox.stateChanged.connect(self.save_settings)
         
         # Add widgets to layout
         self.layout.addWidget(self.startup_checkbox)
         self.layout.addWidget(self.food_ai_checkbox)
         self.layout.addWidget(self.exercise_ai_checkbox)
+        self.layout.addWidget(self.meal_plan_ai_checkbox)
         self.layout.addWidget(self.silent_notif_checkbox)
         self.layout.addWidget(self.desktop_notif)
         
@@ -1565,6 +1611,14 @@ class Settings(QWidget):
     
     def load_settings(self):
         """Load saved settings and apply them to checkboxes"""
+        # Originally was having issues where toggling multiple checkboxes at once would only save one of  them
+        # As such added in block signals while loading to prevent save_settings from being called and ensuring all checkbox states are saved correctly
+        self.startup_checkbox.blockSignals(True)
+        self.food_ai_checkbox.blockSignals(True)
+        self.exercise_ai_checkbox.blockSignals(True)
+        self.silent_notif_checkbox.blockSignals(True)
+        self.meal_plan_ai_checkbox.blockSignals(True)
+        
         # Load checkbox states (default to False if not found)
         self.startup_checkbox.setChecked(
             self.settings.value("startup_enabled", False, type=bool)
@@ -1578,12 +1632,23 @@ class Settings(QWidget):
         self.silent_notif_checkbox.setChecked(
             self.settings.value("silent_notif_enabled", False, type=bool)
         )
+        self.meal_plan_ai_checkbox.setChecked(
+            self.settings.value("meal_plan_ai_enabled", False, type=bool)
+        )
+        
+        # Unblock signals after loading
+        self.startup_checkbox.blockSignals(False)
+        self.food_ai_checkbox.blockSignals(False)
+        self.exercise_ai_checkbox.blockSignals(False)
+        self.silent_notif_checkbox.blockSignals(False)
+        self.meal_plan_ai_checkbox.blockSignals(False)
     
     def save_settings(self):
         """Save current checkbox states to persistent storage"""
         self.settings.setValue("food_ai_enabled", self.food_ai_checkbox.isChecked())
         self.settings.setValue("exercise_ai_enabled", self.exercise_ai_checkbox.isChecked())
         self.settings.setValue("silent_notif_enabled", self.silent_notif_checkbox.isChecked())
+        self.settings.setValue("meal_plan_ai_enabled", self.meal_plan_ai_checkbox.isChecked())
         self.settings.sync()
     
     def save_startup_setting(self):
@@ -1772,7 +1837,7 @@ class HealthApp(QMainWindow):
                 color: {white};
                 background-color: {background_dark_gray};
             }}
-            QLabel#headerLabel {{
+            QLabel#headerLabel, QPushButton#headerLabel {{
                 color: {white};
                 font-weight: bold;
                 font-size: 14px;
@@ -1781,6 +1846,7 @@ class HealthApp(QMainWindow):
                 border-radius: 6px;
                 margin-bottom: 4px;
                 max-height: 20px;
+                text-align: center;
             }}
             QTextEdit {{
                 color: {white};
@@ -1798,14 +1864,18 @@ class HealthApp(QMainWindow):
         # Add tabs
         self.home_page = HomePage()
         self.Settings = Settings()
+        self.MealPlan = MealPlan()
         self.tabs.addTab(self.home_page, "Home")
         self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
         self.tabs.addTab(ExerciseTracker(), "Exercise Tracker")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")
-        self.tabs.addTab(MealPlan(), "Meal Plans")
+        self.tabs.addTab(self.MealPlan, "Meal Plans")
         self.tabs.addTab(ChatBot(), "Chat Bot")
         self.tabs.addTab(self.Settings, "Settings")
+        
+        # Connect meal plan AI checkbox to update MealPlan button states
+        self.Settings.meal_plan_ai_checkbox.stateChanged.connect(self.MealPlan.update_header_buttons_state)
 
         # Setup system tray icon for desktop notifications
         icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
@@ -1889,10 +1959,10 @@ class HealthApp(QMainWindow):
             icon=os.path.abspath("assets/legnedary_astrid_boop_upscale.png") if os.path.exists("assets/legnedary_astrid_boop_upscale.png") else "",
             duration="long"  # Can be "short" or "long"
         )
-            
+
+        # If the silent notifications are disabled, set the audio to the default beep
         if not self.Settings.silent_notif_checkbox.isChecked():
             toast.set_audio(audio.Default, loop=False)            
-        # Eventually make it so app auto opens on boot up in hidden modeand this will show the window
         toast.add_actions(label="Open App", launch="") 
         toast.add_actions(label="Dismiss", launch="")
         toast.show()

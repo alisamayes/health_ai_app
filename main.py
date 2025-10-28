@@ -2,8 +2,9 @@ import sys
 import os
 import sqlite3
 import matplotlib.pyplot as plt
+import threading
 from datetime import datetime, timedelta
-from PyQt6.QtCore import QDate, Qt, QTimer, QSettings
+from PyQt6.QtCore import QDate, Qt, QTimer, QSettings, QObject, pyqtSignal as Signal
 from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -39,6 +40,10 @@ completed_todo_list = ["Calorie tracker","exercise tracker", "app styling", "wei
 # --- Database Setup ---
 # Initilise the various database tables for the app if they dont yet exist
 def init_db():
+    """
+    This function initializes the database tables for the app if they dont yet exist.
+    It creates the tables for the calories, exercise, goals and meal plan.
+    """
     conn = sqlite3.connect("health_app.db")
     c = conn.cursor()
     c.execute("""
@@ -81,7 +86,7 @@ def init_db():
     conn.close()
 
 
-# Global Variables for the styling to make more human readable
+# Global variables for the colours used in the app to make more human readable than hex codes
 white = "#ffffff"
 background_dark_gray = "#2b2b2b"
 border_gray = "#404040"
@@ -89,8 +94,14 @@ button_active_light_gray = "#5a5a5a"
 hover_gray = "#4a4a4a"
 hover_light_green = "#00a527"
 active_dark_green = "#007a1c"
+calories_burned_red = "#f01313"
+overburn_orange = "#d47a2c"
 
 class HomePage(QWidget):
+    """
+    This is the home page of the app. It is the first page that the user sees when they open the app.
+    It contains the logo, app name, and subtitle.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -136,6 +147,10 @@ class HomePage(QWidget):
             self.logo_label.setPixmap(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
 class CalorieTracker(QWidget):
+    """
+    This is the calorie tracker page of the app. It is used to track the calories of the food that the user eats.
+    It contains a date selector, a table to show the entries for a given date, and a form to add and remove entries.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -340,6 +355,10 @@ class CalorieTracker(QWidget):
         self.load_entries()
 
 class ExerciseTracker(QWidget):
+    """
+    This is the exercise tracker page of the app. It is used to track the calories burned by the user through exercise.
+    It contains a date selector, a table to show the entries for a given date, and a form to add and remove entries.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -545,6 +564,11 @@ class ExerciseTracker(QWidget):
         self.load_entries()
 
 class Graphs(QWidget):
+    """
+    This is the graphs page of the app. It is used to display the graphs of the calories consumed and burned over time.
+    It contains a timeframe selector, a graph to show the data, and navigation buttons to increase or decrease the timeframe.
+    TODO: Add in interactivness like that in the goals page.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -579,13 +603,12 @@ class Graphs(QWidget):
         self.layout.addWidget(self.canvas)
 
         # Ensure canvas/figure/axes respect dark theme colors (Qt stylesheets do not style Matplotlib)
-        dark_bg = "#2b2b2b"
         light_fg = "#ffffff"
         grid_color = "#5a5a5a"
         try:
-            self.canvas.setStyleSheet(f"background-color: {dark_bg};")
-            self.canvas.figure.set_facecolor(dark_bg)
-            self.graph.set_facecolor(dark_bg)
+            self.canvas.setStyleSheet(f"background-color: {background_dark_gray};")
+            self.canvas.figure.set_facecolor(background_dark_gray)
+            self.graph.set_facecolor(background_dark_gray)
             for spine in self.graph.spines.values():
                 spine.set_color(grid_color)
             self.graph.tick_params(colors=light_fg)
@@ -745,12 +768,12 @@ class Graphs(QWidget):
         if dates:
             # Plot data as bar charts
             self.graph.bar(dates, food_totals, color=active_dark_green, alpha=0.7, label='Calories Intake')
-            self.graph.bar(dates, exercise_totals, color="#f01313", alpha=0.7, bottom=food_totals, label='Calorie Burned')
-            self.graph.bar(dates, overburn, color="#d47a2c", alpha=0.7, label='Overburn')
+            self.graph.bar(dates, exercise_totals, color=calories_burned_red, alpha=0.7, bottom=food_totals, label='Calorie Burned')
+            self.graph.bar(dates, overburn, color=overburn_orange, alpha=0.7, label='Overburn')
 
-            self.graph.set_title("Daily Calories - Consumed vs Burned", color="#ffffff")
-            self.graph.set_xlabel("Date", color="#ffffff")
-            self.graph.set_ylabel("Calories", color="#ffffff")
+            self.graph.set_title("Daily Calories - Consumed vs Burned", color=white)
+            self.graph.set_xlabel("Date", color=white)
+            self.graph.set_ylabel("Calories", color=white)
             self.graph.grid(True, linestyle='--', alpha=0.3)
             self.graph.legend()
             
@@ -762,12 +785,17 @@ class Graphs(QWidget):
                 self.graph.set_xticks([])
             self.canvas.figure.tight_layout()
         else:
-            self.graph.text(0.5, 0.5, "No data for selected range", ha='center', va='center', color='#cccccc', transform=self.graph.transAxes)
+            self.graph.text(0.5, 0.5, "No data for selected range", ha='center', va='center', color=border_gray, transform=self.graph.transAxes)
             self.graph.set_xticks([])
             self.graph.set_yticks([])
         self.canvas.draw()
 
 class Goals(QWidget):
+    """
+    This is the goals page of the app. It is used to track the weight goal of the user.
+    It contains a current weight button, a target weight button, and a weight loss value label.
+    Each point on the graph is interactive and can be expanded for more info and to edit or delete the entry.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -799,13 +827,13 @@ class Goals(QWidget):
         self.layout.addWidget(self.canvas)
 
         # Ensure canvas/figure/axes respect dark theme colors (Qt stylesheets do not style Matplotlib)
-        dark_bg = "#2b2b2b"
+        background_dark_gray = "#2b2b2b"
         light_fg = "#ffffff"
         grid_color = "#5a5a5a"
         try:
-            self.canvas.setStyleSheet(f"background-color: {dark_bg};")
-            self.canvas.figure.set_facecolor(dark_bg)
-            self.graph.set_facecolor(dark_bg)
+            self.canvas.setStyleSheet(f"background-color: {background_dark_gray};")
+            self.canvas.figure.set_facecolor(background_dark_gray)
+            self.graph.set_facecolor(background_dark_gray)
             for spine in self.graph.spines.values():
                 spine.set_color(grid_color)
             self.graph.tick_params(colors=light_fg)
@@ -985,9 +1013,9 @@ class Goals(QWidget):
             # Plot the weight data
             self.graph.plot(dates, weights, marker='o', color= active_dark_green, linewidth=2)
             self.graph.fill_between(range(len(weights)), weights, color= active_dark_green, alpha=0.15)
-            self.graph.set_title("Weight Progress", color="#ffffff")
-            self.graph.set_xlabel("Date", color="#ffffff")
-            self.graph.set_ylabel("Weight (kg)", color="#ffffff")
+            self.graph.set_title("Weight Progress", color=white)
+            self.graph.set_xlabel("Date", color=white)
+            self.graph.set_ylabel("Weight (kg)", color=white)
             self.graph.grid(True, linestyle='--', alpha=0.3)
             
             # Label x-axis only when number of points is manageable
@@ -999,13 +1027,13 @@ class Goals(QWidget):
         else:
             # Show message when no data is available
             self.graph.text(0.5, 0.5, "No weight data available", 
-                          ha='center', va='center', color='#cccccc', 
+                          ha='center', va='center', color=border_gray, 
                           transform=self.graph.transAxes)
             self.graph.set_xticks([])
             self.graph.set_yticks([])
-            self.graph.set_title("Weight Progress", color="#ffffff")
-            self.graph.set_xlabel("Date", color="#ffffff")
-            self.graph.set_ylabel("Weight (kg)", color="#ffffff")
+            self.graph.set_title("Weight Progress", color=white)
+            self.graph.set_xlabel("Date", color=white)
+            self.graph.set_ylabel("Weight (kg)", color=white)
         
         # Set y-axis bottom limit to target weight if provided (apply to both cases)
         if target_weight is not None:
@@ -1213,6 +1241,12 @@ class Goals(QWidget):
         self.canvas.draw()
 
 class MealPlan(QWidget):
+    """
+    This class creates the meal plan page of the app.
+    It contains a layout for the days of the week, and a widget for each day.
+    The widget for each day are interactive and allow the user to edit the meal list for the day.
+    The meal list is saved to the database when the user edits it.
+    """
     def __init__(self):
         super().__init__()
 
@@ -1316,7 +1350,39 @@ class MealPlan(QWidget):
         conn.commit()
         conn.close()
 
+class AIWorker(QObject):
+    """
+    This class is a worker class to handle AI requests in a separate thread.
+    It is used to handle the AI requests for the meal plan and shopping list.
+    It was made asynchronously as intially when a user hit the send button, the app would freeze until the response was ready.
+    """
+    finished = Signal(str)  # Signal emitted when AI response is ready
+    error = Signal(str)  # Signal emitted if there's an error
+    
+    def __init__(self, prompt):
+        super().__init__()
+        self.prompt = prompt
+    
+    def run(self):
+        """Execute the AI request"""
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a health assistant. Provide practical advice and meal suggestions. Be friendly and informative."},
+                    {"role": "user", "content": self.prompt}
+                ]
+            )
+            self.finished.emit(response.choices[0].message.content)
+        except Exception as e:
+            self.error.emit(f"Error: {str(e)}")
+
 class ChatBot(QWidget):
+    """
+    This class creates the chat bot page of the app.
+    It contains a chat area and an input field for the user to enter their message.
+    The requests and responses are displayed in the chat area.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -1333,6 +1399,10 @@ class ChatBot(QWidget):
         self.setLayout(self.layout)
 
         self.send_button.clicked.connect(self.handle_send)
+        
+        # Track if AI request is in progress
+        self.ai_request_in_progress = False
+        self.current_worker = None
 
     def adjust_input_height(self):
         """Adjust the input field height based on content"""
@@ -1356,27 +1426,82 @@ class ChatBot(QWidget):
         self.input_field.setMaximumHeight(int(new_height))
 
     def handle_send(self):
-        user_message = self.input_field.text().strip()
+        """Handle send button click - create async AI request"""
+        user_message = self.input_field.toPlainText().strip()
         if not user_message:
             return
+        
+        # Prevent multiple simultaneous requests
+        if self.ai_request_in_progress:
+            return
 
+        # Display user message
         self.chat_area.append(f"You: {user_message}")
         self.input_field.clear()
-
-        ai_reply = self.ask_ai(user_message)
-        self.chat_area.append(f"AI: {ai_reply}\n")
-
-    def ask_ai(self, prompt):
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a health assistant. Provide practical advice and meal suggestions. Be friendly and informative."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content
+        
+        # Show "thinking" indicator
+        self.chat_area.append("AI: Thinking...")
+        
+        # Disable send button and input
+        self.set_ui_state(False)
+        
+        # Create worker and run in background thread
+        worker = AIWorker(user_message)
+        worker.finished.connect(self.on_ai_response)
+        worker.error.connect(self.on_ai_error)
+        
+        # Store worker reference to prevent garbage collection
+        self.current_worker = worker
+        self.ai_request_in_progress = True
+        
+        # Run AI request in background thread
+        thread = threading.Thread(target=worker.run)
+        thread.daemon = True
+        thread.start()
+    
+    def set_ui_state(self, enabled):
+        """Enable or disable UI elements during AI request"""
+        self.send_button.setEnabled(enabled)
+        self.input_field.setEnabled(enabled)
+    
+    def on_ai_response(self, response):
+        """Handle successful AI response"""
+        # Remove "Thinking..." and add actual response
+        text = self.chat_area.toPlainText()
+        if text.endswith("AI: Thinking..."):
+            text = text.rsplit("AI: Thinking...", 1)[0]
+        self.chat_area.setPlainText(text)
+        
+        # Add the actual AI response
+        self.chat_area.append(f"AI: {response}\n")
+        
+        # Re-enable UI
+        self.set_ui_state(True)
+        self.ai_request_in_progress = False
+        self.current_worker = None
+    
+    def on_ai_error(self, error_message):
+        """Handle AI request error"""
+        # Remove "Thinking..." and add error message
+        text = self.chat_area.toPlainText()
+        if text.endswith("AI: Thinking..."):
+            text = text.rsplit("AI: Thinking...", 1)[0]
+        self.chat_area.setPlainText(text)
+        
+        # Add error message
+        self.chat_area.append(f"AI: {error_message}\n")
+        
+        # Re-enable UI
+        self.set_ui_state(True)
+        self.ai_request_in_progress = False
+        self.current_worker = None
 
 class Settings(QWidget):
+    """
+    This class creates the settings page of the app.
+    It contains a checkbox for each setting and a button to test the desktop notifications.
+    The settings are saved to the registry on Windows.
+    """
     def __init__(self):
         super().__init__()
         self.layout = QVBoxLayout()
@@ -1468,6 +1593,11 @@ class Settings(QWidget):
 
 # --- Main Window with Tabs ---
 class HealthApp(QMainWindow):
+    """
+    This class creates the main window of the app.
+    It contains the tabs for the different pages of the app.
+    It also contains the startup settings for the app.
+    """
     def __init__(self):
         super().__init__()
         # Initialize QSettings for app preferences

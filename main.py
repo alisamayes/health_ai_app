@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit
+    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -36,6 +36,17 @@ extra_todo_list = ["calorie suggestions based on input factors", "goal advice", 
 completed_todo_list = ["Calorie tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
 """
 
+
+# Global variables for the colours used in the app to make more human readable than hex codes
+white = "#ffffff"
+background_dark_gray = "#2b2b2b"
+border_gray = "#404040"
+button_active_light_gray = "#5a5a5a"
+hover_gray = "#4a4a4a"
+hover_light_green = "#00a527"
+active_dark_green = "#007a1c"
+calories_burned_red = "#f01313"
+overburn_orange = "#d47a2c"
 
 # --- Database Setup ---
 # Initilise the various database tables for the app if they dont yet exist
@@ -84,18 +95,6 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-
-
-# Global variables for the colours used in the app to make more human readable than hex codes
-white = "#ffffff"
-background_dark_gray = "#2b2b2b"
-border_gray = "#404040"
-button_active_light_gray = "#5a5a5a"
-hover_gray = "#4a4a4a"
-hover_light_green = "#00a527"
-active_dark_green = "#007a1c"
-calories_burned_red = "#f01313"
-overburn_orange = "#d47a2c"
 
 class HomePage(QWidget):
     """
@@ -1243,8 +1242,9 @@ class Goals(QWidget):
 class DayWidget(QWidget):
     """
     This class represents a single day widget in the meal plan.
-    It contains a header label for the day name and a QTextEdit for the meal list.
+    It contains a header label(button) for the day name and a QTextEdit for the meal list.
     The meal list is automatically saved to the database when changed.
+    TODO: Add AI functionality to the day widget to suggest meals for the day.
     """
     def __init__(self, day_name, valid_days):
         super().__init__()
@@ -1277,28 +1277,6 @@ class DayWidget(QWidget):
         day_layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins within each day
         day_layout.setSpacing(2)  # Minimal spacing between header and list
     
-    def show_AI_meal_plan_popup(self):
-        """Show a popup to have AI suggest meals for the day or alternatives to the current meal list for that day."""
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("AI Meal Plan Suggestions")
-        msg_box.setText("Would you like to use the OpenAI feature to suggest a meal plan for the day?.")
-
-        Yes_button = msg_box.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
-        No_button = msg_box.addButton("No", QMessageBox.ButtonRole.RejectRole)
-        
-        msg_box.exec()
-
-        clicked_button = msg_box.clickedButton()
-
-        if clicked_button == Yes_button:
-            self.ai_suggest_day_meal_plan()
-        elif clicked_button == No_button:
-            return
-
-    def ai_suggest_day_meal_plan(self):
-        """Suggest a meal plan for the day using AI"""
-        pass
-    
     def get_day_text_from_db(self):
         """Load the meal text for this day from the database"""
         # Guard against unexpected column name injection by validating against known days
@@ -1329,6 +1307,134 @@ class DayWidget(QWidget):
         c.execute(f"UPDATE meal_plan SET {self.day_name} = ? WHERE id = 1", (new_text,))
         conn.commit()
         conn.close()
+
+    def show_AI_meal_plan_popup(self):
+        """
+        Show a popup to have AI suggest meals for the day or alternatives to the current meal list for that day. 
+        This is disabled if the meal plan AI is disabled in the settings.
+        """
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("AI Meal Plan Suggestions")
+        msg_box.setText("Would you like to use the OpenAI feature to suggest a meal plan for the day?.")
+
+        Yes_button = msg_box.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
+        No_button = msg_box.addButton("No", QMessageBox.ButtonRole.RejectRole)
+        
+        msg_box.exec()
+
+        clicked_button = msg_box.clickedButton()
+
+        if clicked_button == Yes_button:     
+            self.ai_suggest_day_meal_plan()
+        elif clicked_button == No_button:
+            return
+
+
+    def ai_suggest_day_meal_plan(self):
+        """Suggest a meal plan for the day using AI with option chips. TODO: Add dietry requirement options for the prompt and cut out AI fluff."""
+        current_text = self.meal_list.toPlainText()
+        dialog = PlannerOptionsDialog(self, current_text)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # if the user has decided to use the AI feature, form a prompt for it in proper readable english
+            AI_promt = "Can you suggest a meal plan for the day by giving me suggestions on what to eat? "
+            options = dialog.values() # get the selected options from the popup box and add them to a list
+            additional_criteria = []
+            for key, value in options.items():
+                if value:
+                    additional_criteria.append(key)
+
+            # Add the additional criteria to the prompt in proper readable english
+            if len(additional_criteria) == 1:
+                AI_promt += "I want the meal plan to be " + additional_criteria[0] + ". "
+            elif len(additional_criteria) > 1: # add "," between the criteria except for the last one which has "and"
+                AI_promt += "I want the meal plan to be " + ", ".join(additional_criteria[:-1]) + " and " + additional_criteria[-1] + ". "
+            # Include the current meal plan in the prompt if it exists
+            if current_text:
+                AI_promt += "The current meal plan is: " + current_text + ". You can use this as a starting point, make changes to it or scrap it entirely if it doesnt fit the criteria."
+            
+            #debugging print, remove later
+            print(AI_promt)
+
+            # Create worker and run in background thread
+            worker = AIWorker(AI_promt)
+            worker.finished.connect(self.meal_plan_on_ai_response)
+            worker.error.connect(self.meal_plan_on_ai_error)
+            
+            # Store worker reference to prevent garbage collection
+            self.current_worker = worker
+            self.ai_request_in_progress = True
+            
+            # Run AI request in background thread
+            thread = threading.Thread(target=worker.run)
+            thread.daemon = True
+            thread.start() 
+
+        else:
+            return
+
+    def meal_plan_on_ai_response(self, response):
+        """Handle successful AI response"""
+        self.meal_list.setPlainText(response)
+
+    def meal_plan_on_ai_error(self, error_message):
+        """Handle AI request error"""
+        print(error_message)
+
+
+class PlannerOptionsDialog(QDialog):
+    """
+    Popup dialog showing chip-style toggle options using checkable QToolButtons.
+    Note: This was done as I didnt want to use checkboxes as they are not as visually appealing or consistent with the rest of the app.
+    While this is more code and more complex, I belive it is worth it for the better user experience.
+    """
+    def __init__(self, parent=None, current_text=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Meal Planner Options")
+        self.current_text = current_text
+        main_layout = QVBoxLayout(self)
+
+        label = QLabel("Choose any options you want to include:")
+        main_layout.addWidget(label)
+
+        chips_layout = QHBoxLayout()
+        chips_layout.setSpacing(6)
+
+        self.healthy = self._make_chip("Healthy")
+        self.cheap = self._make_chip("Cheap")
+        self.vegetarian = self._make_chip("Vegetarian")
+        self.vegan = self._make_chip("Vegan")
+        self.quick = self._make_chip("Quick")
+
+        chips_layout.addWidget(self.healthy)
+        chips_layout.addWidget(self.cheap)
+        chips_layout.addWidget(self.vegetarian)
+        chips_layout.addWidget(self.vegan)
+        chips_layout.addWidget(self.quick)
+
+        main_layout.addLayout(chips_layout)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        main_layout.addWidget(buttons)
+
+
+    def _make_chip(self, text: str) -> QToolButton:
+        btn = QToolButton(self)
+        btn.setText(text)
+        btn.setCheckable(True)
+        btn.setAutoRaise(True)
+        return btn
+
+    def values(self) -> dict:
+        return {
+            "healthy": self.healthy.isChecked(),
+            "cheap": self.cheap.isChecked(),
+            "vegetarian": self.vegetarian.isChecked(),
+            "vegan": self.vegan.isChecked(),
+            "quick": self.quick.isChecked(),
+        }
+        
 
 class MealPlan(QWidget):
     """
@@ -1390,8 +1496,6 @@ class MealPlan(QWidget):
         meal_plan_ai_enabled = self.settings.value("meal_plan_ai_enabled", False, type=bool)
         for day_widget in self.day_widgets:
             day_widget.day_header.setEnabled(meal_plan_ai_enabled)
-
-
 
 class AIWorker(QObject):
     """
@@ -1490,8 +1594,8 @@ class ChatBot(QWidget):
         
         # Create worker and run in background thread
         worker = AIWorker(user_message)
-        worker.finished.connect(self.on_ai_response)
-        worker.error.connect(self.on_ai_error)
+        worker.finished.connect(self.chat_bot_on_ai_response)
+        worker.error.connect(self.chat_bot_on_ai_error)
         
         # Store worker reference to prevent garbage collection
         self.current_worker = worker
@@ -1507,7 +1611,7 @@ class ChatBot(QWidget):
         self.send_button.setEnabled(enabled)
         self.input_field.setEnabled(enabled)
     
-    def on_ai_response(self, response):
+    def chat_bot_on_ai_response(self, response):
         """Handle successful AI response"""
         # Remove "Thinking..." and add actual response
         text = self.chat_area.toPlainText()
@@ -1523,7 +1627,7 @@ class ChatBot(QWidget):
         self.ai_request_in_progress = False
         self.current_worker = None
     
-    def on_ai_error(self, error_message):
+    def chat_bot_on_ai_error(self, error_message):
         """Handle AI request error"""
         # Remove "Thinking..." and add error message
         text = self.chat_area.toPlainText()
@@ -1855,6 +1959,29 @@ class HealthApp(QMainWindow):
                 border-radius: 4px;
                 padding: 8px;
                 margin: 2px;
+            }}
+            QToolButton {{
+                background-color: {border_gray};
+                color: {white};
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }}
+            QToolButton:checked {{
+                background: {active_dark_green};
+                border-color: {border_gray};
+            }}
+            QToolButton:hover {{
+                background-color: {hover_light_green};
+                border-color: {border_gray};
+            }}
+            QDialog {{
+                background-color: {background_dark_gray};
+                color: {white};
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
             }}
         """)
 

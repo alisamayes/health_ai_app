@@ -1,1 +1,8 @@
-*.env
+# Ignore all files such as build, env and so on and only allow the main ones which follow:
+!.gitignore
+!main.py
+!README.md
+!requirements.txt
+!health_app.db
+!assets/
+!assets/**

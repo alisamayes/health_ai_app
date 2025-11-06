@@ -1,6 +1,7 @@
 import sys
 import os
 import sqlite3
+import shutil
 import matplotlib.pyplot as plt
 import threading
 from datetime import datetime, timedelta
@@ -10,7 +11,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton
+    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -1380,7 +1381,6 @@ class DayWidget(QWidget):
         """Handle AI request error"""
         print(error_message)
 
-
 class PlannerOptionsDialog(QDialog):
     """
     Popup dialog showing chip-style toggle options using checkable QToolButtons.
@@ -1435,7 +1435,6 @@ class PlannerOptionsDialog(QDialog):
             "quick": self.quick.isChecked(),
         }
         
-
 class MealPlan(QWidget):
     """
     This class creates the meal plan page of the app.
@@ -1667,6 +1666,9 @@ class Settings(QWidget):
         
         # Desktop notification test button
         self.desktop_notif = QPushButton("Desktop Notification Test")
+        # Button to allow user to import a database to use for the app
+        self.import_database_button = QPushButton("Import Database")
+        self.import_database_button.clicked.connect(self.import_database)
         
         # Connect checkbox state changes to save settings (except startup which is handled separately)
         self.food_ai_checkbox.stateChanged.connect(self.save_settings)
@@ -1681,7 +1683,8 @@ class Settings(QWidget):
         self.layout.addWidget(self.meal_plan_ai_checkbox)
         self.layout.addWidget(self.silent_notif_checkbox)
         self.layout.addWidget(self.desktop_notif)
-        
+        self.layout.addWidget(self.import_database_button)
+
         # Load saved settings
         self.load_settings()
     
@@ -1760,7 +1763,36 @@ class Settings(QWidget):
         self.settings.setValue("startup_enabled", self.startup_checkbox.isChecked())
         self.settings.sync()
 
-# --- Main Window with Tabs ---
+    def import_database(self):
+        """
+        Allow the user to import another instance of the database to use for the app.
+        While the databse persists between instances, new versions from the exe produced by pyinstaller will not be able to use the old database.
+        This function allows the user to import one from file, useful for dev testing and perhaps other use cases.
+        """
+        # File explorer for user to find the database file to import (might need to make an export for exe users who dont have the loose source files)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Database", "", "Database Files (*.db)")
+        if file_path:
+            try:
+                # Backup existing database if it exists
+                if os.path.exists("health_app.db"):
+                    backup_path = f"health_app_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                    shutil.copy("health_app.db", backup_path)
+                
+                # Copy the imported database file to the app's directory
+                shutil.copy(file_path, "health_app.db")
+                
+                QMessageBox.information(
+                    self,
+                    "Database Imported",
+                    "Database imported successfully!\n\nPlease restart the application to see the changes."
+                )
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Import Error",
+                    f"Failed to import database:\n{str(e)}"
+                )
+
 class HealthApp(QMainWindow):
     """
     This class creates the main window of the app.

@@ -1,10 +1,20 @@
+# Imports. For larger libraries, do partial imports for smaller filesize
 import sys
 import os
 import sqlite3
 import shutil
-import matplotlib.pyplot as plt
 import threading
 from datetime import datetime, timedelta
+import requests
+from winotify import Notification, audio
+from openai import OpenAI
+from dotenv import load_dotenv
+from difflib import get_close_matches
+
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
 from PyQt6.QtCore import QDate, Qt, QTimer, QSettings, QObject, pyqtSignal as Signal
 from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
@@ -13,12 +23,8 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog
 )
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-from winotify import Notification, audio
-from openai import OpenAI
-from dotenv import load_dotenv
 
+# This will only work for myself as it is my API key. Other potential users will need to get their own and add it to the .env file. As this is a personal project, this isnt an issue for the forseeable future.
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
 
@@ -186,13 +192,15 @@ class CalorieTracker(QWidget):
         self.remove_button = QPushButton("Remove Entry")
         self.add_button.clicked.connect(self.add_entry)
         self.remove_button.clicked.connect(self.remove_entry)
+        self.suggest_button = QPushButton("Suggest Calories")
+        self.suggest_button.clicked.connect(self.suggest_calories_locally)
 
         input_layout = QHBoxLayout()
         input_layout.addWidget(self.food_input)
         input_layout.addWidget(self.calorie_input)
         input_layout.addWidget(self.add_button)
         input_layout.addWidget(self.remove_button)
-
+        input_layout.addWidget(self.suggest_button)
        
 
         # Table section to show entries for a given date
@@ -353,6 +361,110 @@ class CalorieTracker(QWidget):
         conn.close()
 
         self.load_entries()
+
+    def suggest_calories(self):
+        calories = self.suggest_calories_locally()
+        if calories:
+            self.calorie_input.setText(str(calories))
+        else:
+            QMessageBox.warning(self, "Suggest Calories", "No calories found for the food.")
+            return None
+
+    def suggest_calories_locally(self):
+        """
+        Suggest calories based on the food input using fuzzy match (>= 0.75) from the localdatabase.
+        Returns an int average calories for the closest food, or None if no match.
+        """
+        user_input = (self.food_input.text() or "").strip()
+        if not user_input:
+            return None
+
+        conn = sqlite3.connect("health_app.db")
+        c = conn.cursor()
+
+        # Get distinct food names to match against
+        c.execute("SELECT DISTINCT food FROM calories")
+        foods = [row[0] for row in c.fetchall() if row and row[0]]
+
+        # Find closest match with cutoff 0.75
+        matches = get_close_matches(user_input, foods, n=1, cutoff=0.75)
+        if not matches:
+            conn.close()
+            print("No matches found locally")
+            return self.suggest_calories_from_usda(user_input)
+            # TODO: Implement lookup from the USDA FoodData Central API to get the calories for the closest food
+
+        matched_food = matches[0]
+        print(f"Matched food: {matched_food}")
+        # Use average calories across entries for the matched food
+        c.execute("SELECT AVG(calories) FROM calories WHERE food = ?", (matched_food,))
+        row = c.fetchone()
+        conn.close()
+
+        if not row or row[0] is None:
+            print("No calories found for the matched food")
+            return None
+        
+        print(f"Calories found for the matched food: {row[0]}")
+        return int(round(row[0]))
+
+    def suggest_calories_from_usda(self, user_input):
+        """
+        Suggest calories based on the food input using fuzzy match (>= 0.75) from the USDA FoodData Central API.
+        Returns an int average calories for the closest food, or None if no match.
+        """
+        print("Now trying to suggest calories from USDA for food: ", user_input)
+        if not user_input:
+            return None
+        
+        # Step 1: Search for the food
+        search_url = f"https://api.nal.usda.gov/fdc/v1/foods/search?api_key={os.getenv("USDA_API_KEY")}"
+        search_payload = {"query": user_input, "pageSize": 1}
+        search_response = requests.post(search_url, json=search_payload)
+
+        if search_response.status_code != 200:
+            print("Error point 1: ", search_response.status_code)
+            return None
+
+        results = search_response.json().get("foods", [])
+        if not results:
+            print("No results found from USDA")
+            return None
+
+        fdc_id = results[0]["fdcId"]
+
+        # Step 2: Get the nutrient details
+        food_url = f"https://api.nal.usda.gov/fdc/v1/food/{fdc_id}?api_key={os.getenv("USDA_API_KEY")}"
+        food_response = requests.get(food_url)
+
+        if food_response.status_code != 200:
+            print("No food data found from USDA")
+            print("Error point 2: ", food_response.status_code)
+            return None
+
+        food_data = food_response.json()
+        print(f"Food data: {food_data}")
+
+        # Find the calorie value
+        for nutrient in food_data.get("foodNutrients", []):
+            nutrient_name = nutrient.get("nutrientName")
+            if not nutrient_name and isinstance(nutrient.get("nutrient"), dict):
+                nutrient_name = nutrient["nutrient"].get("name")
+
+            unit_name = nutrient.get("unitName")
+            if not unit_name and isinstance(nutrient.get("nutrient"), dict):
+                unit_name = nutrient["nutrient"].get("unitName")
+
+            value = nutrient.get("value")
+            if value is None and isinstance(nutrient.get("nutrient"), dict):
+                value = nutrient["nutrient"].get("amount")
+
+            if nutrient_name and nutrient_name.lower() == "energy" and unit_name and unit_name.upper() == "KCAL":
+                print(f"Calories found for the matched food: {value}")
+                return value
+
+        print("No calories found for the matched food")
+        return None
 
 class ExerciseTracker(QWidget):
     """

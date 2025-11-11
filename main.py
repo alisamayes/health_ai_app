@@ -10,7 +10,7 @@ from winotify import Notification, audio
 from openai import OpenAI
 from dotenv import load_dotenv
 from difflib import get_close_matches
-
+from contextlib import contextmanager
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -38,7 +38,7 @@ Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = [ "AI suggested meal substitues", "desktop promts"]
+core_todo_list = [ "AI suggested meal substitues", "desktop promts", "daily reccomended calorie intake"]
 extra_todo_list = ["calorie suggestions based on input factors", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
 completed_todo_list = ["Calorie tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
 """
@@ -55,6 +55,36 @@ active_dark_green = "#007a1c"
 calories_burned_red = "#f01313"
 overburn_orange = "#d47a2c"
 
+
+@contextmanager
+def use_db(mode: str):
+    """
+    Context manager to standardize database access which is a common occurance in the app.
+
+    Parameters
+    ----------
+    mode:
+        Either ``"read"`` or ``"write"``. Controls whether a commit is issued
+        when the context exits cleanly.
+    """
+    if mode not in {"read", "write"}:
+        raise ValueError(f"Invalid mode: {mode}")
+
+    conn = sqlite3.connect("health_app.db")
+    try:
+        cursor = conn.cursor()
+        try:
+            yield cursor
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            if mode == "write":
+                conn.commit()
+    finally:
+        conn.close()
+
+
 # --- Database Setup ---
 # Initilise the various database tables for the app if they dont yet exist
 def init_db():
@@ -62,46 +92,43 @@ def init_db():
     This function initializes the database tables for the app if they dont yet exist.
     It creates the tables for the calories, exercise, goals and meal plan.
     """
-    conn = sqlite3.connect("health_app.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS calories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            food TEXT NOT NULL,
-            calories INTEGER NOT NULL,
-            entry_date TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS exercise (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            activity TEXT NOT NULL,
-            calories INTEGER NOT NULL,
-            entry_date TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS goals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            current_weight REAL,
-            target_weight REAL,
-            updated_date TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS meal_plan (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Monday TEXT,
-            Tuesday TEXT,
-            Wednesday TEXT,
-            Thursday TEXT,
-            Friday TEXT,
-            Saturday TEXT,
-            Sunday TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with use_db("write") as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                food TEXT NOT NULL,
+                calories INTEGER NOT NULL,
+                entry_date TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exercise (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                activity TEXT NOT NULL,
+                calories INTEGER NOT NULL,
+                entry_date TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                current_weight REAL,
+                target_weight REAL,
+                updated_date TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS meal_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Monday TEXT,
+                Tuesday TEXT,
+                Wednesday TEXT,
+                Thursday TEXT,
+                Friday TEXT,
+                Saturday TEXT,
+                Sunday TEXT
+            )
+        """)
 
 class HomePage(QWidget):
     """
@@ -234,20 +261,80 @@ class CalorieTracker(QWidget):
         self.load_entries()
 
     def add_entry(self):
-        food = self.food_input.text()
+        """Show dialog to create a new calorie entry."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Food Entry")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("What food would you like to track and how many calories does it contain?")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        form_layout = QFormLayout()
+
+        food_input = QLineEdit(dialog)
+        food_input.setPlaceholderText("Enter food name")
+        food_input.setText(self.food_input.text())
+        form_layout.addRow("Food:", food_input)
+
+        calorie_input = QLineEdit(dialog)
+        calorie_input.setPlaceholderText("Enter calories")
+        calorie_input.setText(self.calorie_input.text())
+        form_layout.addRow("Calories:", calorie_input)
+
+        layout.addLayout(form_layout)
+
+        def handle_suggest():
+            food_text = food_input.text().strip()
+            if not food_text:
+                QMessageBox.warning(dialog, "Suggest Calories", "Enter a food name to get a suggestion.")
+                return
+
+            calories = self.suggest_calories_locally(food_text)
+            if calories is None:
+                QMessageBox.warning(dialog, "Suggest Calories", "No calories found for the food.")
+            else:
+                calorie_input.setText(str(calories))
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        add_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        add_button.setText("Add")
+        cancel_button.setText("Cancel")
+
+        suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
+
+        suggest_button.clicked.connect(handle_suggest)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        food = food_input.text().strip()
+        if not food:
+            return
+
         try:
-            calories = int(self.calorie_input.text())
+            calories = int(calorie_input.text())
         except ValueError:
-            return  # Ignore if calories is not a number
+            QMessageBox.warning(self, "Add Entry", "Calories must be a whole number.")
+            return
 
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO calories (food, calories, entry_date) VALUES (?, ?, ?)",
-                  (food, calories, date_str))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            cursor.execute(
+                "INSERT INTO calories (food, calories, entry_date) VALUES (?, ?, ?)",
+                (food, calories, date_str),
+            )
 
         self.food_input.clear()
         self.calorie_input.clear()
@@ -271,21 +358,21 @@ class CalorieTracker(QWidget):
 
         # Get IDs for this date only
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT id FROM calories WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        ids = [row[0] for row in c.fetchall()]
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT id FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            ids = [row[0] for row in cursor.fetchall()]
 
         index = row_number - 1
         if index < 0 or index >= len(ids):
-            conn.close()
             QMessageBox.warning(self, "Remove Entry", "Invalid row number.")
             return
 
         target_id = ids[index]
-        c.execute("DELETE FROM calories WHERE id = ?", (target_id,))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            cursor.execute("DELETE FROM calories WHERE id = ?", (target_id,))
 
         self.load_entries()
 
@@ -300,11 +387,12 @@ class CalorieTracker(QWidget):
     def load_entries(self):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        rows = c.fetchall()
-        conn.close()
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            rows = cursor.fetchall()
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -343,22 +431,22 @@ class CalorieTracker(QWidget):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        
+
         # Get all records for this date with their IDs
-        c.execute("SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        rows = c.fetchall()
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            rows = cursor.fetchall()
 
         # Delete the selected records
-        for row_index in selected_rows:
-            if row_index < len(rows):
-                record_id = rows[row_index][0]  # Get the ID from the database query
-                c.execute("DELETE FROM calories WHERE id = ?", (record_id,))
-
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            for row_index in selected_rows:
+                if row_index < len(rows):
+                    record_id = rows[row_index][0]  # Get the ID from the database query
+                    cursor.execute("DELETE FROM calories WHERE id = ?", (record_id,))
 
         self.load_entries()
 
@@ -370,39 +458,36 @@ class CalorieTracker(QWidget):
             QMessageBox.warning(self, "Suggest Calories", "No calories found for the food.")
             return None
 
-    def suggest_calories_locally(self):
+    def suggest_calories_locally(self, user_input=None):
         """
         Suggest calories based on the food input using fuzzy match (>= 0.75) from the localdatabase.
         Returns an int average calories for the closest food, or None if no match.
         """
-        user_input = (self.food_input.text() or "").strip()
+        if user_input is None:
+            user_input = self.food_input.text()
+
+        user_input = (user_input or "").strip()
         if not user_input:
             return None
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
+        with use_db("read") as cursor:
+            # Get distinct food names to match against
+            cursor.execute("SELECT DISTINCT food FROM calories")
+            foods = [row[0] for row in cursor.fetchall() if row and row[0]]
 
-        # Get distinct food names to match against
-        c.execute("SELECT DISTINCT food FROM calories")
-        foods = [row[0] for row in c.fetchall() if row and row[0]]
+            # Find closest match with cutoff 0.75
+            matches = get_close_matches(user_input, foods, n=1, cutoff=0.75)
+            if not matches:
+                print("No matches found locally")
+                return self.suggest_calories_from_usda(user_input)
 
-        # Find closest match with cutoff 0.75
-        matches = get_close_matches(user_input, foods, n=1, cutoff=0.75)
-        if not matches:
-            conn.close()
-            print("No matches found locally")
-            return self.suggest_calories_from_usda(user_input)
-            # TODO: Implement lookup from the USDA FoodData Central API to get the calories for the closest food
-
-        matched_food = matches[0]
-        print(f"Matched food: {matched_food}")
-        # Use average calories across entries for the matched food
-        c.execute("SELECT AVG(calories) FROM calories WHERE food = ?", (matched_food,))
-        row = c.fetchone()
-        conn.close()
+            matched_food = matches[0]
+            # Use average calories across entries for the matched food
+            cursor.execute("SELECT AVG(calories) FROM calories WHERE food = ?", (matched_food,))
+            row = cursor.fetchone()
 
         if not row or row[0] is None:
-            print("No calories found for the matched food")
+            #print("No calories found for the matched food")
             return None
         
         print(f"Calories found for the matched food: {row[0]}")
@@ -423,7 +508,7 @@ class CalorieTracker(QWidget):
         search_response = requests.post(search_url, json=search_payload)
 
         if search_response.status_code != 200:
-            print("Error point 1: ", search_response.status_code)
+            #print("Error point 1: ", search_response.status_code)
             return None
 
         results = search_response.json().get("foods", [])
@@ -439,11 +524,11 @@ class CalorieTracker(QWidget):
 
         if food_response.status_code != 200:
             print("No food data found from USDA")
-            print("Error point 2: ", food_response.status_code)
+            #print("Error point 2: ", food_response.status_code)
             return None
 
         food_data = food_response.json()
-        print(f"Food data: {food_data}")
+        #print(f"Food data: {food_data}")
 
         # Find the calorie value
         for nutrient in food_data.get("foodNutrients", []):
@@ -460,10 +545,10 @@ class CalorieTracker(QWidget):
                 value = nutrient["nutrient"].get("amount")
 
             if nutrient_name and nutrient_name.lower() == "energy" and unit_name and unit_name.upper() == "KCAL":
-                print(f"Calories found for the matched food: {value}")
+                #print(f"Calories found for the matched food: {value}")
                 return value
 
-        print("No calories found for the matched food")
+        #print("No calories found for the matched food")
         return None
 
 class ExerciseTracker(QWidget):
@@ -555,12 +640,11 @@ class ExerciseTracker(QWidget):
 
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO exercise (activity, calories, entry_date) VALUES (?, ?, ?)",
-                  (activity, calories, date_str))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            cursor.execute(
+                "INSERT INTO exercise (activity, calories, entry_date) VALUES (?, ?, ?)",
+                (activity, calories, date_str),
+            )
 
         self.activity_input.clear()
         self.calorie_input.clear()
@@ -584,21 +668,21 @@ class ExerciseTracker(QWidget):
 
         # Get IDs for this date only
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT id FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        ids = [row[0] for row in c.fetchall()]
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT id FROM exercise WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            ids = [row[0] for row in cursor.fetchall()]
 
         index = row_number - 1
         if index < 0 or index >= len(ids):
-            conn.close()
             QMessageBox.warning(self, "Remove Entry", "Invalid row number.")
             return
 
         target_id = ids[index]
-        c.execute("DELETE FROM exercise WHERE id = ?", (target_id,))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            cursor.execute("DELETE FROM exercise WHERE id = ?", (target_id,))
 
         self.load_entries()
 
@@ -613,11 +697,12 @@ class ExerciseTracker(QWidget):
     def load_entries(self):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        rows = c.fetchall()
-        conn.close()
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            rows = cursor.fetchall()
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -656,22 +741,22 @@ class ExerciseTracker(QWidget):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
         
         # Get all records for this date with their IDs
-        c.execute("SELECT id, activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC", (date_str,))
-        rows = c.fetchall()
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT id, activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            rows = cursor.fetchall()
 
         # Delete the selected records
-        for row_index in selected_rows:
-            if row_index < len(rows):
-                record_id = rows[row_index][0]  # Get the ID from the database query
-                c.execute("DELETE FROM exercise WHERE id = ?", (record_id,))
-
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            for row_index in selected_rows:
+                if row_index < len(rows):
+                    record_id = rows[row_index][0]  # Get the ID from the database query
+                    cursor.execute("DELETE FROM exercise WHERE id = ?", (record_id,))
 
         self.load_entries()
 
@@ -735,11 +820,9 @@ class Graphs(QWidget):
 
     def get_date_range(self, timeframe_label: str):
         # Find earliest entry_date in the database. The start date will not be earlier than this.
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT MIN(entry_date) FROM calories")
-        earliest_row = c.fetchone()
-        conn.close()
+        with use_db("read") as cursor:
+            cursor.execute("SELECT MIN(entry_date) FROM calories")
+            earliest_row = cursor.fetchone()
         earliest_qdate = QDate.fromString(earliest_row[0], "yyyy-MM-dd") if earliest_row and earliest_row[0] else None
 
         end_qdate = QDate.currentDate() # End date is the current date.
@@ -780,55 +863,52 @@ class Graphs(QWidget):
         timeframe = self.timeframe_selector.currentText()
         start_str, end_str = self.get_date_range(timeframe)
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        
-        # Fetch food calorie data
-        if start_str is None:
-            c.execute(
-                """
-                SELECT entry_date, SUM(calories) AS total
-                FROM calories
-                GROUP BY entry_date
-                ORDER BY entry_date ASC
-                """
-            )
-        else:
-            c.execute(
-                """
-                SELECT entry_date, SUM(calories) AS total
-                FROM calories
-                WHERE entry_date BETWEEN ? AND ?
-                GROUP BY entry_date
-                ORDER BY entry_date ASC
-                """,
-                (start_str, end_str),
-            )
-        food_rows = c.fetchall()
-        
-        # Fetch exercise calorie data
-        if start_str is None:
-            c.execute(
-                """
-                SELECT entry_date, SUM(calories) AS total
-                FROM exercise
-                GROUP BY entry_date
-                ORDER BY entry_date ASC
-                """
-            )
-        else:
-            c.execute(
-                """
-                SELECT entry_date, SUM(calories) AS total
-                FROM exercise
-                WHERE entry_date BETWEEN ? AND ?
-                GROUP BY entry_date
-                ORDER BY entry_date ASC
-                """,
-                (start_str, end_str),
-            )
-        exercise_rows = c.fetchall()
-        conn.close()
+        with use_db("read") as cursor:
+            # Fetch food calorie data
+            if start_str is None:
+                cursor.execute(
+                    """
+                    SELECT entry_date, SUM(calories) AS total
+                    FROM calories
+                    GROUP BY entry_date
+                    ORDER BY entry_date ASC
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT entry_date, SUM(calories) AS total
+                    FROM calories
+                    WHERE entry_date BETWEEN ? AND ?
+                    GROUP BY entry_date
+                    ORDER BY entry_date ASC
+                    """,
+                    (start_str, end_str),
+                )
+            food_rows = cursor.fetchall()
+
+            # Fetch exercise calorie data
+            if start_str is None:
+                cursor.execute(
+                    """
+                    SELECT entry_date, SUM(calories) AS total
+                    FROM exercise
+                    GROUP BY entry_date
+                    ORDER BY entry_date ASC
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT entry_date, SUM(calories) AS total
+                    FROM exercise
+                    WHERE entry_date BETWEEN ? AND ?
+                    GROUP BY entry_date
+                    ORDER BY entry_date ASC
+                    """,
+                    (start_str, end_str),
+                )
+            exercise_rows = cursor.fetchall()
 
         # Build a continuous date range and fill missing days with zero
         calorie_date_to_total = {r[0]: r[1] for r in food_rows}
@@ -978,12 +1058,11 @@ class Goals(QWidget):
         )
         if ok:
             # Save to database
-            conn = sqlite3.connect("health_app.db")
-            c = conn.cursor()
-            c.execute("INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
-                     (weight, datetime.now().strftime("%Y-%m-%d")))
-            conn.commit()
-            conn.close()
+            with use_db("write") as cursor:
+                cursor.execute(
+                    "INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
+                    (weight, datetime.now().strftime("%Y-%m-%d")),
+                )
             
             # Update button text
             self.current_weight.setText(f"Current Weight: {weight} kg")
@@ -1008,12 +1087,11 @@ class Goals(QWidget):
         )
         if ok:
             # Save to database
-            conn = sqlite3.connect("health_app.db")
-            c = conn.cursor()
-            c.execute("INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
-                     (weight, datetime.now().strftime("%Y-%m-%d")))
-            conn.commit()
-            conn.close()
+            with use_db("write") as cursor:
+                cursor.execute(
+                    "INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
+                    (weight, datetime.now().strftime("%Y-%m-%d")),
+                )
             
             # Update button text
             self.target_weight.setText(f"Target Weight: {weight} kg")
@@ -1024,29 +1102,30 @@ class Goals(QWidget):
 
     def get_target_weight(self):
         """Get the current target weight from database"""
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
-        target_row = c.fetchone()
-        conn.close()
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
+            )
+            target_row = cursor.fetchone()
         return target_row[0] if target_row else None
     
     def load_info(self):
         """Reload the page so the current and target weight buttons reflect the respective 
         values in the database and the loss value label shows the difference."""
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()       
-        # Get latest current weight
-        c.execute("SELECT current_weight FROM goals WHERE current_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
-        current_row = c.fetchone()
-        current_weight = current_row[0] if current_row else None
-        
-        # Get latest target weight
-        c.execute("SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1")
-        target_row = c.fetchone()
-        target_weight = target_row[0] if target_row else None
-        
-        conn.close()
+        with use_db("read") as cursor:
+            # Get latest current weight
+            cursor.execute(
+                "SELECT current_weight FROM goals WHERE current_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
+            )
+            current_row = cursor.fetchone()
+            current_weight = current_row[0] if current_row else None
+
+            # Get latest target weight
+            cursor.execute(
+                "SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
+            )
+            target_row = cursor.fetchone()
+            target_weight = target_row[0] if target_row else None
         
         # Update button texts
         if current_weight is not None:
@@ -1073,18 +1152,17 @@ class Goals(QWidget):
 
     def load_graphs(self, target_weight):
         """Load and display weight progress graph from database"""
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        
-        # Query for current weight entries with dates and IDs
-        c.execute("""
-            SELECT id, current_weight, updated_date 
-            FROM goals 
-            WHERE current_weight IS NOT NULL 
-            ORDER BY updated_date ASC
-        """)
-        rows = c.fetchall()
-        conn.close()
+        with use_db("read") as cursor:
+            # Query for current weight entries with dates and IDs
+            cursor.execute(
+                """
+                SELECT id, current_weight, updated_date 
+                FROM goals 
+                WHERE current_weight IS NOT NULL 
+                ORDER BY updated_date ASC
+                """
+            )
+            rows = cursor.fetchall()
 
         ids = []
         dates = []
@@ -1313,18 +1391,16 @@ class Goals(QWidget):
             
     def update_weight_entry(self, entry_id, new_date_str, new_weight):
         """Update the weight entry in the database using the entry ID"""
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        
-        # Update the entry by ID
-        c.execute("""
-            UPDATE goals 
-            SET current_weight = ?, updated_date = ?
-            WHERE id = ?
-        """, (new_weight, new_date_str, entry_id))
-        
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            # Update the entry by ID
+            cursor.execute(
+                """
+                UPDATE goals 
+                SET current_weight = ?, updated_date = ?
+                WHERE id = ?
+                """,
+                (new_weight, new_date_str, entry_id),
+            )
         
         # Reload the graph and refresh all labels
         target_weight = self.get_target_weight()
@@ -1337,11 +1413,8 @@ class Goals(QWidget):
 
     def delete_weight_entry(self, current_date_str, current_weight, index, entry_id):
         """Remove weight entry from database and graph"""
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        c.execute("DELETE FROM goals WHERE id = ?", (entry_id,))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            cursor.execute("DELETE FROM goals WHERE id = ?", (entry_id,))
         
         # Reload the graph and refresh all labels
         target_weight = self.get_target_weight()
@@ -1395,12 +1468,10 @@ class DayWidget(QWidget):
         # Guard against unexpected column name injection by validating against known days
         if self.day_name not in self.valid_days:
             return None
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        # Select explicit column for the single row (id = 1)
-        c.execute(f"SELECT {self.day_name} FROM meal_plan WHERE id = 1")
-        row = c.fetchone()
-        conn.close()
+        with use_db("read") as cursor:
+            # Select explicit column for the single row (id = 1)
+            cursor.execute(f"SELECT {self.day_name} FROM meal_plan WHERE id = 1")
+            row = cursor.fetchone()
         if row is None:
             return None
         return row[0]
@@ -1414,12 +1485,9 @@ class DayWidget(QWidget):
         """Update the meal text for this day in the database"""
         if self.day_name not in self.valid_days:
             return
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        # Update explicit column for the single row (id = 1)
-        c.execute(f"UPDATE meal_plan SET {self.day_name} = ? WHERE id = 1", (new_text,))
-        conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            # Update explicit column for the single row (id = 1)
+            cursor.execute(f"UPDATE meal_plan SET {self.day_name} = ? WHERE id = 1", (new_text,))
 
     def show_AI_meal_plan_popup(self):
         """
@@ -1560,21 +1628,18 @@ class MealPlan(QWidget):
         # Initialize QSettings for persistent settings
         self.settings = QSettings("MindfulMauschen", "HealthApp")
 
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        # Ensure there is exactly one row to update against (id = 1)
-        c.execute("SELECT COUNT(*) FROM meal_plan")
-        count_row = c.fetchone()
-        existing_count = count_row[0] if count_row else 0
-        if existing_count == 0:
-            c.execute(
-                """
-                INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
-                VALUES ('', '', '', '', '', '', '')
-                """
-            )
-            conn.commit()
-        conn.close()
+        with use_db("write") as cursor:
+            # Ensure there is exactly one row to update against (id = 1)
+            cursor.execute("SELECT COUNT(*) FROM meal_plan")
+            count_row = cursor.fetchone()
+            existing_count = count_row[0] if count_row else 0
+            if existing_count == 0:
+                cursor.execute(
+                    """
+                    INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
+                    VALUES ('', '', '', '', '', '', '')
+                    """
+                )
 
         self.layout = QVBoxLayout()
         
@@ -2203,18 +2268,18 @@ class HealthApp(QMainWindow):
         week_end = week_start + timedelta(days=6)
         week_end_str = week_end.strftime("%Y-%m-%d")
         
-        conn = sqlite3.connect("health_app.db")
-        c = conn.cursor()
-        
-        # Check if a current_weight entry exists for this week (Monday to Sunday)
-        c.execute("""
-            SELECT * FROM goals 
-            WHERE updated_date BETWEEN ? AND ?
-            AND current_weight IS NOT NULL
-        """, (week_start_str, week_end_str))
-        
-        result = c.fetchone()
-        conn.close()
+        with use_db("read") as cursor:
+            # Check if a current_weight entry exists for this week (Monday to Sunday)
+            cursor.execute(
+                """
+                SELECT 1 FROM goals 
+                WHERE updated_date BETWEEN ? AND ?
+                AND current_weight IS NOT NULL
+                LIMIT 1
+                """,
+                (week_start_str, week_end_str),
+            )
+            result = cursor.fetchone()
         
         # If no weight entry exists for this week, send notification
         if not result:

@@ -21,7 +21,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
-    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog
+    QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog,
+    QAbstractItemView
 )
 
 # This will only work for myself as it is my API key. Other potential users will need to get their own and add it to the .env file. As this is a personal project, this isnt an issue for the forseeable future.
@@ -209,31 +210,28 @@ class CalorieTracker(QWidget):
         date_layout.addWidget(self.next_day_button)
 
 
-        # Input section for adding and removing food and calorie entries
-        self.food_input = QLineEdit()
-        self.food_input.setPlaceholderText("Enter food name")
-        self.calorie_input = QLineEdit()
-        self.calorie_input.setPlaceholderText("Enter calories")
-
+        # Input buttons for adding and removing food and calorie entries
         self.add_button = QPushButton("Add Entry")
-        self.remove_button = QPushButton("Remove Entry")
         self.add_button.clicked.connect(self.add_entry)
+
+        self.edit_button = QPushButton("Edit Entry")
+        self.edit_button.clicked.connect(self.edit_entry)   
+
+        self.remove_button = QPushButton("Remove Entry")
         self.remove_button.clicked.connect(self.remove_entry)
-        self.suggest_button = QPushButton("Suggest Calories")
-        self.suggest_button.clicked.connect(self.suggest_calories_locally)
 
         input_layout = QHBoxLayout()
-        input_layout.addWidget(self.food_input)
-        input_layout.addWidget(self.calorie_input)
         input_layout.addWidget(self.add_button)
+        input_layout.addWidget(self.edit_button)
         input_layout.addWidget(self.remove_button)
-        input_layout.addWidget(self.suggest_button)
        
 
         # Table section to show entries for a given date
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Food", "Calories"])
+        # Disable editing cells by double-clicking as found a user could edit the info locally. While it isnt saved to database its undesirable behaviour.
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         
         # Enable automatic column resizing to fit content
         self.table.horizontalHeader().setStretchLastSection(False)
@@ -278,12 +276,10 @@ class CalorieTracker(QWidget):
 
         food_input = QLineEdit(dialog)
         food_input.setPlaceholderText("Enter food name")
-        food_input.setText(self.food_input.text())
         form_layout.addRow("Food:", food_input)
 
         calorie_input = QLineEdit(dialog)
         calorie_input.setPlaceholderText("Enter calories")
-        calorie_input.setText(self.calorie_input.text())
         form_layout.addRow("Calories:", calorie_input)
 
         layout.addLayout(form_layout)
@@ -335,10 +331,116 @@ class CalorieTracker(QWidget):
                 "INSERT INTO calories (food, calories, entry_date) VALUES (?, ?, ?)",
                 (food, calories, date_str),
             )
-
-        self.food_input.clear()
-        self.calorie_input.clear()
         self.load_entries()
+
+    def edit_entry(self):
+        """Show dialog to edit a calorie entry."""
+        row_count = self.table.rowCount()
+        if row_count == 0:
+            QMessageBox.information(self, "Edit Entry", "There are no entries to edit.")
+            return
+
+        row_number, ok = QInputDialog.getInt(
+            self,
+            "Edit Entry",
+            f"Enter row number to edit (1 - {row_count}):",
+            1, 1, row_count, 1
+        )
+        if not ok:
+            return
+
+        # Get IDs for this date only
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+        with use_db("read") as cursor:
+            cursor.execute(
+                "SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                (date_str,),
+            )
+            entries = cursor.fetchall()
+
+        index = row_number - 1
+        if index < 0 or index >= len(entries):
+            QMessageBox.warning(self, "Edit Entry", "Invalid row number.")
+            return
+
+        target_id, current_food, current_calories = entries[index]
+
+        # Create edit dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Food Entry")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("Edit the food name and calories:")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        form_layout = QFormLayout()
+
+        food_input = QLineEdit(dialog)
+        food_input.setPlaceholderText("Enter food name")
+        food_input.setText(current_food)
+        form_layout.addRow("Food:", food_input)
+
+        calorie_input = QLineEdit(dialog)
+        calorie_input.setPlaceholderText("Enter calories")
+        calorie_input.setText(str(current_calories))
+        form_layout.addRow("Calories:", calorie_input)
+
+        layout.addLayout(form_layout)
+
+        def handle_suggest():
+            food_text = food_input.text().strip()
+            if not food_text:
+                QMessageBox.warning(dialog, "Suggest Calories", "Enter a food name to get a suggestion.")
+                return
+
+            calories = self.suggest_calories_locally(food_text)
+            if calories is None:
+                QMessageBox.warning(dialog, "Suggest Calories", "No calories found for the food.")
+            else:
+                calorie_input.setText(str(calories))
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        ok_button.setText("Save")
+        cancel_button.setText("Cancel")
+
+        suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
+
+        suggest_button.clicked.connect(handle_suggest)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        food = food_input.text().strip()
+        if not food:
+            return
+
+        try:
+            calories = int(calorie_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "Edit Entry", "Calories must be a whole number.")
+            return
+
+        # Update the database entry
+        with use_db("write") as cursor:
+            cursor.execute(
+                "UPDATE calories SET food = ?, calories = ? WHERE id = ?",
+                (food, calories, target_id),
+            )
+        self.load_entries()
+
+        
 
     def remove_entry(self):
         row_count = self.table.rowCount()
@@ -508,7 +610,7 @@ class CalorieTracker(QWidget):
         search_response = requests.post(search_url, json=search_payload)
 
         if search_response.status_code != 200:
-            #print("Error point 1: ", search_response.status_code)
+            print("Error point 1: ", search_response.status_code)
             return None
 
         results = search_response.json().get("foods", [])
@@ -524,7 +626,7 @@ class CalorieTracker(QWidget):
 
         if food_response.status_code != 200:
             print("No food data found from USDA")
-            #print("Error point 2: ", food_response.status_code)
+            print("Error point 2: ", food_response.status_code)
             return None
 
         food_data = food_response.json()
@@ -541,12 +643,15 @@ class CalorieTracker(QWidget):
                 unit_name = nutrient["nutrient"].get("unitName")
 
             value = nutrient.get("value")
-            if value is None and isinstance(nutrient.get("nutrient"), dict):
-                value = nutrient["nutrient"].get("amount")
+            if value is None:
+                value = nutrient.get("amount")
 
             if nutrient_name and nutrient_name.lower() == "energy" and unit_name and unit_name.upper() == "KCAL":
-                #print(f"Calories found for the matched food: {value}")
-                return value
+                print (nutrient)
+                print(f"Nutrient name: {nutrient_name}")
+                print(f"Unit name: {unit_name}")
+                print(f"Calories: {value}")
+                return int(value)
 
         #print("No calories found for the matched food")
         return None
@@ -605,6 +710,8 @@ class ExerciseTracker(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Activity", "Calories"])
+        # Disable editing cells by double-clicking as found a user could edit the info locally. While it isnt saved to database its undesirable behaviour.
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         
         # Enable automatic column resizing to fit content
         self.table.horizontalHeader().setStretchLastSection(False)

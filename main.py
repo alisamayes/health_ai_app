@@ -33,7 +33,7 @@ client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
 This is the starter file for an AI-driven self health and tracking app I am working on, using Python for the main part, PyQt for the GUI and SQLite for the database
 Plan
 Tab 1: Home page → App name, navigation
-Tab 2: Calorie Tracker → form to enter meals, calories, macros
+Tab 2: Food Tracker → form to enter meals, calories, macros
 Tab 3: Exercise Tracker → log workouts, sets/reps, time
 Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
@@ -41,7 +41,7 @@ Tab 6: Shopping List → add/remove grocery items
 
 core_todo_list = [ "AI suggested meal substitues", "desktop promts", "daily reccomended calorie intake"]
 extra_todo_list = ["calorie suggestions based on input factors", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
-completed_todo_list = ["Calorie tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
+completed_todo_list = ["Food tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
 """
 
 
@@ -91,11 +91,11 @@ def use_db(mode: str):
 def init_db():
     """
     This function initializes the database tables for the app if they dont yet exist.
-    It creates the tables for the calories, exercise, goals and meal plan.
-    """
+    It creates the tables for the foods, exercise, goals and meal plan.
+    """   
     with use_db("write") as cursor:
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS calories (
+            CREATE TABLE IF NOT EXISTS foods (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 food TEXT NOT NULL,
                 calories INTEGER NOT NULL,
@@ -180,9 +180,9 @@ class HomePage(QWidget):
             size = int(min(self.width(), self.height()) * 0.5)  # 50% of smaller dimension
             self.logo_label.setPixmap(pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
-class CalorieTracker(QWidget):
+class FoodTracker(QWidget):
     """
-    This is the calorie tracker page of the app. It is used to track the calories of the food that the user eats.
+    This is the food tracker page of the app. It is used to track the calories of the food that the user eats.
     It contains a date selector, a table to show the entries for a given date, and a form to add and remove entries.
     """
     def __init__(self):
@@ -259,7 +259,7 @@ class CalorieTracker(QWidget):
         self.load_entries()
 
     def add_entry(self):
-        """Show dialog to create a new calorie entry."""
+        """Show dialog to create a new food entry."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Food Entry")
         dialog.setModal(True)
@@ -272,17 +272,17 @@ class CalorieTracker(QWidget):
         message_label.setWordWrap(True)
         layout.addWidget(message_label)
 
-        form_layout = QFormLayout()
+        input_layout = QFormLayout()
 
         food_input = QLineEdit(dialog)
         food_input.setPlaceholderText("Enter food name")
-        form_layout.addRow("Food:", food_input)
+        input_layout.addRow("Food:", food_input)
 
         calorie_input = QLineEdit(dialog)
         calorie_input.setPlaceholderText("Enter calories")
-        form_layout.addRow("Calories:", calorie_input)
+        input_layout.addRow("Calories:", calorie_input)
 
-        layout.addLayout(form_layout)
+        layout.addLayout(input_layout)
 
         def handle_suggest():
             food_text = food_input.text().strip()
@@ -328,7 +328,7 @@ class CalorieTracker(QWidget):
 
         with use_db("write") as cursor:
             cursor.execute(
-                "INSERT INTO calories (food, calories, entry_date) VALUES (?, ?, ?)",
+                "INSERT INTO foods (food, calories, entry_date) VALUES (?, ?, ?)",
                 (food, calories, date_str),
             )
         self.load_entries()
@@ -353,7 +353,7 @@ class CalorieTracker(QWidget):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
         with use_db("read") as cursor:
             cursor.execute(
-                "SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                "SELECT id, food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
                 (date_str,),
             )
             entries = cursor.fetchall()
@@ -378,19 +378,19 @@ class CalorieTracker(QWidget):
         message_label.setWordWrap(True)
         layout.addWidget(message_label)
 
-        form_layout = QFormLayout()
+        input_layout = QFormLayout()
 
         food_input = QLineEdit(dialog)
         food_input.setPlaceholderText("Enter food name")
         food_input.setText(current_food)
-        form_layout.addRow("Food:", food_input)
+        input_layout.addRow("Food:", food_input)
 
         calorie_input = QLineEdit(dialog)
         calorie_input.setPlaceholderText("Enter calories")
         calorie_input.setText(str(current_calories))
-        form_layout.addRow("Calories:", calorie_input)
+        input_layout.addRow("Calories:", calorie_input)
 
-        layout.addLayout(form_layout)
+        layout.addLayout(input_layout)
 
         def handle_suggest():
             food_text = food_input.text().strip()
@@ -435,7 +435,7 @@ class CalorieTracker(QWidget):
         # Update the database entry
         with use_db("write") as cursor:
             cursor.execute(
-                "UPDATE calories SET food = ?, calories = ? WHERE id = ?",
+                "UPDATE foods SET food = ?, calories = ? WHERE id = ?",
                 (food, calories, target_id),
             )
         self.load_entries()
@@ -462,7 +462,7 @@ class CalorieTracker(QWidget):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
         with use_db("read") as cursor:
             cursor.execute(
-                "SELECT id FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                "SELECT id FROM foods WHERE entry_date = ? ORDER BY id DESC",
                 (date_str,),
             )
             ids = [row[0] for row in cursor.fetchall()]
@@ -474,7 +474,7 @@ class CalorieTracker(QWidget):
 
         target_id = ids[index]
         with use_db("write") as cursor:
-            cursor.execute("DELETE FROM calories WHERE id = ?", (target_id,))
+            cursor.execute("DELETE FROM foods WHERE id = ?", (target_id,))
 
         self.load_entries()
 
@@ -491,7 +491,7 @@ class CalorieTracker(QWidget):
 
         with use_db("read") as cursor:
             cursor.execute(
-                "SELECT food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                "SELECT food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
                 (date_str,),
             )
             rows = cursor.fetchall()
@@ -538,7 +538,7 @@ class CalorieTracker(QWidget):
         # Get all records for this date with their IDs
         with use_db("read") as cursor:
             cursor.execute(
-                "SELECT id, food, calories FROM calories WHERE entry_date = ? ORDER BY id DESC",
+                "SELECT id, food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
                 (date_str,),
             )
             rows = cursor.fetchall()
@@ -548,7 +548,7 @@ class CalorieTracker(QWidget):
             for row_index in selected_rows:
                 if row_index < len(rows):
                     record_id = rows[row_index][0]  # Get the ID from the database query
-                    cursor.execute("DELETE FROM calories WHERE id = ?", (record_id,))
+                    cursor.execute("DELETE FROM foods WHERE id = ?", (record_id,))
 
         self.load_entries()
 
@@ -574,7 +574,7 @@ class CalorieTracker(QWidget):
 
         with use_db("read") as cursor:
             # Get distinct food names to match against
-            cursor.execute("SELECT DISTINCT food FROM calories")
+            cursor.execute("SELECT DISTINCT food FROM foods")
             foods = [row[0] for row in cursor.fetchall() if row and row[0]]
 
             # Find closest match with cutoff 0.75
@@ -585,7 +585,7 @@ class CalorieTracker(QWidget):
 
             matched_food = matches[0]
             # Use average calories across entries for the matched food
-            cursor.execute("SELECT AVG(calories) FROM calories WHERE food = ?", (matched_food,))
+            cursor.execute("SELECT AVG(calories) FROM foods WHERE food = ?", (matched_food,))
             row = cursor.fetchone()
 
         if not row or row[0] is None:
@@ -928,7 +928,7 @@ class Graphs(QWidget):
     def get_date_range(self, timeframe_label: str):
         # Find earliest entry_date in the database. The start date will not be earlier than this.
         with use_db("read") as cursor:
-            cursor.execute("SELECT MIN(entry_date) FROM calories")
+            cursor.execute("SELECT MIN(entry_date) FROM foods")
             earliest_row = cursor.fetchone()
         earliest_qdate = QDate.fromString(earliest_row[0], "yyyy-MM-dd") if earliest_row and earliest_row[0] else None
 
@@ -976,7 +976,7 @@ class Graphs(QWidget):
                 cursor.execute(
                     """
                     SELECT entry_date, SUM(calories) AS total
-                    FROM calories
+                    FROM foods
                     GROUP BY entry_date
                     ORDER BY entry_date ASC
                     """
@@ -985,7 +985,7 @@ class Graphs(QWidget):
                 cursor.execute(
                     """
                     SELECT entry_date, SUM(calories) AS total
-                    FROM calories
+                    FROM foods
                     WHERE entry_date BETWEEN ? AND ?
                     GROUP BY entry_date
                     ORDER BY entry_date ASC
@@ -2309,7 +2309,7 @@ class HealthApp(QMainWindow):
         self.Settings = Settings()
         self.MealPlan = MealPlan()
         self.tabs.addTab(self.home_page, "Home")
-        self.tabs.addTab(CalorieTracker(), "Calorie Tracker")
+        self.tabs.addTab(FoodTracker(), "Food Tracker")
         self.tabs.addTab(ExerciseTracker(), "Exercise Tracker")
         self.tabs.addTab(Graphs(), "Graphs")
         self.tabs.addTab(Goals(), "Goals")

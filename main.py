@@ -39,9 +39,9 @@ Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = [ "AI suggested meal substitues", "desktop promts", "daily reccomended calorie intake"]
+core_todo_list = [ "desktop promts", "daily reccomended calorie intake"]
 extra_todo_list = ["calorie suggestions based on input factors", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
-completed_todo_list = ["Food tracker","exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
+completed_todo_list = ["AI suggested meal substitues", "Food tracker", "exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
 """
 
 
@@ -264,27 +264,7 @@ class FoodTracker(QWidget):
         dialog.setWindowTitle("Add Food Entry")
         dialog.setModal(True)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-
-        message_label = QLabel("What food would you like to track and how many calories does it contain?")
-        message_label.setWordWrap(True)
-        layout.addWidget(message_label)
-
-        input_layout = QFormLayout()
-
-        food_input = QLineEdit(dialog)
-        food_input.setPlaceholderText("Enter food name")
-        input_layout.addRow("Food:", food_input)
-
-        calorie_input = QLineEdit(dialog)
-        calorie_input.setPlaceholderText("Enter calories")
-        input_layout.addRow("Calories:", calorie_input)
-
-        layout.addLayout(input_layout)
-
-        def handle_suggest():
+        def handle_suggest(food_input, calorie_input):
             food_text = food_input.text().strip()
             if not food_text:
                 QMessageBox.warning(dialog, "Suggest Calories", "Enter a food name to get a suggestion.")
@@ -296,18 +276,60 @@ class FoodTracker(QWidget):
             else:
                 calorie_input.setText(str(calories))
 
+        def handle_quickadd(food_name, food_calories):
+            """Handle quick-add button click by filling in the food and calorie inputs."""
+            food_input.setText(food_name)
+            calorie_input.setText(str(int(round(food_calories))))
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("What food would you like to track and how many calories does it contain?")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        input_layout = QFormLayout()
+        food_input = QLineEdit(dialog)
+        food_input.setPlaceholderText("Enter food name")
+        input_layout.addRow("Food:", food_input)
+        calorie_input = QLineEdit(dialog)
+        calorie_input.setPlaceholderText("Enter calories")
+        input_layout.addRow("Calories:", calorie_input)
+        layout.addLayout(input_layout)
+
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         add_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
         cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
         add_button.setText("Add")
         cancel_button.setText("Cancel")
-
         suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
-
         suggest_button.clicked.connect(handle_suggest)
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
+
+        # A selection of 5 buttons with the most common foods and their calories.
+        # TODO: See if can impliment some sort of NN model to suggest the most common foods and their calories.
+        quickadd_layout = QHBoxLayout()
+        with use_db("read") as cursor:
+            cursor.execute("""
+                SELECT MIN(food) as food, AVG(calories) as calories
+                FROM foods
+                GROUP BY UPPER(food)
+                ORDER BY COUNT(*) DESC
+                LIMIT 5
+            """)
+            most_common_foods = cursor.fetchall()
+            for food in most_common_foods:
+                food_name = food[0]
+                food_calories = food[1]
+                text = f"{food_name} | {int(round(food_calories))}"
+                quickadd_button = QPushButton(text)
+                # Connect the button click to the handler with the specific food data
+                quickadd_button.clicked.connect(lambda checked, name=food_name, cal=food_calories: handle_quickadd(name, cal))
+                quickadd_layout.addWidget(quickadd_button)
+        layout.addLayout(quickadd_layout)
 
         dialog.setLayout(layout)
 

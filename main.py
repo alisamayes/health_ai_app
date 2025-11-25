@@ -4,6 +4,7 @@ import os
 import sqlite3
 import shutil
 import threading
+import re
 from datetime import datetime, timedelta
 import requests
 from winotify import Notification, audio
@@ -85,7 +86,6 @@ def use_db(mode: str):
     finally:
         conn.close()
 
-
 # --- Database Setup ---
 # Initilise the various database tables for the app if they dont yet exist
 def init_db():
@@ -115,9 +115,16 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 current_weight REAL,
                 target_weight REAL,
+                daily_calorie_goal REAL,
                 updated_date TEXT NOT NULL
             )
         """)
+        # Add daily_calorie_goal column if it doesn't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE goals ADD COLUMN daily_calorie_goal REAL")
+        except sqlite3.OperationalError:
+            # Column already exists, ignore
+            pass
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS meal_plan (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,7 +311,7 @@ class FoodTracker(QWidget):
         add_button.setText("Add")
         cancel_button.setText("Cancel")
         suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
-        suggest_button.clicked.connect(handle_suggest)
+        suggest_button.clicked.connect(lambda: handle_suggest(food_input, calorie_input))
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -1123,23 +1130,45 @@ class Goals(QWidget):
         self.setLayout(self.layout)
        
         # Following buttons are for inputting and displaying the weight goal values
-        self.current_weight = QPushButton("Current Weight: -- kg")
-        self.target_weight = QPushButton("Target Weight: -- kg")
-        self.weight_loss_value = QLabel("Weight Loss: -- kg")
+        input_layout = QHBoxLayout()
+        self.add_current_weight_button = QPushButton("Add Current Weight")
+        self.add_target_weight_button = QPushButton("Add Target Weight")
+        self.calculate_daily_calorie_goal_button = QPushButton("Calculate Daily Calorie Goal")
+        self.add_current_weight_button.clicked.connect(self.input_current_weight)
+        self.add_target_weight_button.clicked.connect(self.input_target_weight)
+        self.calculate_daily_calorie_goal_button.clicked.connect(self.calculate_daily_calorie_goal)
+        input_layout.addWidget(self.add_current_weight_button)
+        input_layout.addWidget(self.add_target_weight_button)
+        input_layout.addWidget(self.calculate_daily_calorie_goal_button)
 
-        self.current_weight.clicked.connect(self.input_current_weight)
-        self.target_weight.clicked.connect(self.input_target_weight)
+        # Create a container widget for the info layer
+        info_container = QWidget()
+        info_layout = QHBoxLayout()
+        info_container.setLayout(info_layout)
+        
+        self.current_weight = QLabel("Current Weight: -- kg")
+        self.target_weight = QLabel("Target Weight: -- kg")
+        self.weight_loss_value = QLabel("Weight Loss Goal: -- kg")
+        self.weight_loss_timeframe = QLabel("Timeframe: -- days")
+        self.daily_calorie_goal = QLabel("Daily Calorie Goal: -- kcal")
+        info_layout.addWidget(self.current_weight)
+        info_layout.addWidget(self.target_weight)
+        info_layout.addWidget(self.weight_loss_value)
+        info_layout.addWidget(self.weight_loss_timeframe)
+        info_layout.addWidget(self.daily_calorie_goal)
+        
+        # Calculate max height based on text height plus padding
+        font_metrics = self.current_weight.fontMetrics()
+        text_height = font_metrics.height()
+        padding = 16  # 16 pixels of padding
+        max_height = text_height + padding
+        info_container.setMaximumHeight(max_height)
 
-        target_layout = QHBoxLayout()
-        target_layout.addWidget(self.current_weight)
-        target_layout.addWidget(self.target_weight)
-        target_layout.addWidget(self.weight_loss_value)
-
-        self.layout.addLayout(target_layout)
-
+        self.layout.addLayout(input_layout)
+        self.layout.addWidget(info_container)
+        
         # Load existing values and update labels
         self.load_info()
-
 
         # Matplotlib canvas for displaying the history of weight entries
         self.canvas = FigureCanvas(Figure(figsize=(6, 3), dpi=100))
@@ -1170,7 +1199,6 @@ class Goals(QWidget):
         # Initial load
         target_weight = self.get_target_weight()
         self.load_graphs(target_weight)
-
 
     def input_current_weight(self):
         """Make popup appear where user can enter a weight in kg for their current weight. 
@@ -1229,6 +1257,64 @@ class Goals(QWidget):
             # Refresh graph with new target weight as y-axis limit
             self.load_graphs(weight)
 
+    def calculate_daily_calorie_goal(self):
+        """Make popup appear where user can enter their personal relevant info and then an AI model will calculate the daily calorie goal best suited for the user.
+        This data is recorded in a database so it's saved for future use.
+        Change text of button to match the daily calorie goal."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Daily Calorie Goal")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        input_layout = QFormLayout()
+        age_input = QLineEdit(dialog)
+        age_input.setPlaceholderText("Enter age")
+        input_layout.addRow("Age:", age_input)
+        height_input = QLineEdit(dialog)
+        height_input.setPlaceholderText("Enter height in cm")
+        input_layout.addRow("Height (cm):", height_input)
+        gender_input = QLineEdit(dialog)
+        gender_input.setPlaceholderText("Enter gender")
+        input_layout.addRow("Gender:", gender_input)
+        activity_level_input = QLineEdit(dialog)
+        activity_level_input.setPlaceholderText("Enter activity level")
+        input_layout.addRow("Activity Level:", activity_level_input)
+        timeframe_input = QLineEdit(dialog)
+        timeframe_input.setPlaceholderText("Enter timeframe in months")
+        input_layout.addRow("Timeframe (months):", timeframe_input)
+        layout.addLayout(input_layout)
+
+        def handle_calculate():
+            """Handle calculate button click"""
+            self.calculate_daily_calorie_goal_ai(
+                age_input.text(), 
+                height_input.text(), 
+                gender_input.text(), 
+                activity_level_input.text(), 
+                timeframe_input.text(),
+                # Strip the non numeric characters from the current and target weight
+                float(self.current_weight.text().split(":")[1].split()[0]),
+                float(self.target_weight.text().split(":")[1].split()[0]),
+            )
+            dialog.accept()  # Close the dialog after calculation
+        
+        button_layout = QHBoxLayout()
+        calculate_button = QPushButton("Calculate")
+        calculate_button.clicked.connect(handle_calculate)
+        button_layout.addWidget(calculate_button)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.setLayout(layout)
+        
+        # Show the dialog
+        dialog.exec()
+
     def get_target_weight(self):
         """Get the current target weight from database"""
         with use_db("read") as cursor:
@@ -1255,6 +1341,13 @@ class Goals(QWidget):
             )
             target_row = cursor.fetchone()
             target_weight = target_row[0] if target_row else None
+            
+            # Get latest daily calorie goal
+            cursor.execute(
+                "SELECT daily_calorie_goal FROM goals WHERE daily_calorie_goal IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
+            )
+            calorie_row = cursor.fetchone()
+            daily_calorie_goal = calorie_row[0] if calorie_row else None
         
         # Update button texts
         if current_weight is not None:
@@ -1266,6 +1359,16 @@ class Goals(QWidget):
             self.target_weight.setText(f"Target Weight: {target_weight} kg")
         else:
             self.target_weight.setText("Target Weight: -- kg")
+        
+        # Update daily calorie goal display
+        if daily_calorie_goal is not None:
+            # Display as integer if it's a whole number, otherwise show one decimal place
+            if daily_calorie_goal == int(daily_calorie_goal):
+                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {int(daily_calorie_goal)} kcal")
+            else:
+                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {daily_calorie_goal:.1f} kcal")
+        else:
+            self.daily_calorie_goal.setText("Daily Calorie Goal: -- kcal")
         
         # Calculate and display weight loss
         if current_weight is not None and target_weight is not None:
@@ -1464,7 +1567,7 @@ class Goals(QWidget):
             return
         elif clicked_button == delete_button:
             entry_id = self.ids_copy[index]
-            self.delete_weight_entry(date_str, weight, index, entry_id)
+            self.delete_weight_entry(entry_id)
             return
 
     def edit_weight_entry(self, current_date_str, current_weight, index, entry_id):
@@ -1540,7 +1643,7 @@ class Goals(QWidget):
         self.canvas.flush_events()
         self.canvas.draw()
 
-    def delete_weight_entry(self, current_date_str, current_weight, index, entry_id):
+    def delete_weight_entry(self, entry_id):
         """Remove weight entry from database and graph"""
         with use_db("write") as cursor:
             cursor.execute("DELETE FROM goals WHERE id = ?", (entry_id,))
@@ -1553,6 +1656,74 @@ class Goals(QWidget):
         self.canvas.figure.tight_layout()
         self.canvas.flush_events()
         self.canvas.draw()
+
+    def calculate_daily_calorie_goal_ai(self, age, height, gender, activity_level, timeframe, current_weight, target_weight):
+        """Calculate the daily calorie goal using AI"""
+        daily_calories = 2000 # default value if AI fails to calculate
+        self.weight_loss_timeframe.setText(f"Weight Loss Timeframe: {timeframe} months")
+        self.daily_calorie_goal.setText(f"Daily Calorie Goal: {daily_calories} kcal")
+        
+        # Save initial daily calorie goal to database
+        with use_db("write") as cursor:
+            cursor.execute(
+                "INSERT INTO goals (daily_calorie_goal, updated_date) VALUES (?, ?)",
+                (daily_calories, datetime.now().strftime("%Y-%m-%d")),
+            )
+        
+        # Use AI to calculate the daily calorie goal
+
+        AI_promt = ("Calculate the daily calorie goal for a " + str(age) + " year old " + str(gender) + " with a height of " + str(height) + " cm and an activity level of " + str(activity_level) + ". "
+                    "They are currently " + str(current_weight) + " kg and the target weight is " + str(target_weight) + " kg over a timeframe of " + str(timeframe) + " months. "
+                    "Please tailor your response in the format of only 'Daily Calories:number'.")
+
+        worker = AIWorker(AI_promt)
+        worker.finished.connect(self.daily_calories_calculation_on_ai_response)
+        worker.error.connect(self.daily_calories_calculation_on_ai_error)
+        
+        # Store worker reference to prevent garbage collection
+        self.current_worker = worker
+        self.ai_request_in_progress = True
+        
+        # Run AI request in background thread
+        thread = threading.Thread(target=worker.run)
+        thread.daemon = True
+        thread.start()
+
+    def daily_calories_calculation_on_ai_response(self, response):
+        """Handle successful AI response"""
+        # Extract the number from the response (format: "Daily Calories:number")
+        try:
+            # Try to extract number from response
+            if "Daily Calories:" in response:
+                calorie_value = float(response.split("Daily Calories:")[1].strip().split()[0])
+            else:
+                # If format is different, try to extract any number from the response
+                numbers = re.findall(r'\d+', response)
+                calorie_value = float(numbers[0]) if numbers else None
+        except (ValueError, IndexError):
+            # If parsing fails, use the response as-is and try to extract a number
+            numbers = re.findall(r'\d+', response)
+            calorie_value = float(numbers[0]) if numbers else None
+        
+        if calorie_value is not None:
+            # Save to database
+            with use_db("write") as cursor:
+                cursor.execute(
+                    "INSERT INTO goals (daily_calorie_goal, updated_date) VALUES (?, ?)",
+                    (calorie_value, datetime.now().strftime("%Y-%m-%d")),
+                )
+            # Display as integer if it's a whole number, otherwise show one decimal place
+            if calorie_value == int(calorie_value):
+                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {int(calorie_value)} kcal")
+            else:
+                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {calorie_value:.1f} kcal")
+        else:
+            # If we can't extract a number, just display the response as-is
+            self.daily_calorie_goal.setText(f"Daily Calorie Goal: {response}")
+
+    def daily_calories_calculation_on_ai_error(self, error_message):
+        """Handle AI request error"""
+        print(error_message)
 
 class DayWidget(QWidget):
     """

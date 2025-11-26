@@ -253,14 +253,19 @@ class FoodTracker(QWidget):
         self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
 
         # Section for showing total daily calorie intake for a given date
-        self.calorie_label = QLabel("Daily Calories:")
+        calorie_layout = QHBoxLayout()
+        self.calorie_label = QLabel("Daily Calories Intake:")
+        self.daily_calorie_goal_label = QLabel("Daily Calorie Goal:")
         self.calorie_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        self.daily_calorie_goal_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        calorie_layout.addWidget(self.calorie_label)
+        calorie_layout.addWidget(self.daily_calorie_goal_label)
 
         # Add to layout
         self.layout.addLayout(date_layout)
         self.layout.addLayout(input_layout)
         self.layout.addWidget(self.table)
-        self.layout.addWidget(self.calorie_label)
+        self.layout.addLayout(calorie_layout)
         self.setLayout(self.layout)
 
         # Load existing data
@@ -470,8 +475,6 @@ class FoodTracker(QWidget):
             )
         self.load_entries()
 
-        
-
     def remove_entry(self):
         row_count = self.table.rowCount()
         if row_count == 0:
@@ -536,8 +539,26 @@ class FoodTracker(QWidget):
 
         # Update total calories label
         total_calories = sum(row[1] for row in rows) if rows else 0
-        selected_date_display = self.date_selector.date().toString("dd-MM-yyyy")
-        self.calorie_label.setText(f"Daily Calories ({selected_date_display}): {total_calories}")
+        self.calorie_label.setText(f"Daily Calorie Intake: {total_calories}")
+
+        with use_db("read") as cursor:
+            try:
+                cursor.execute(
+                    "SELECT daily_calorie_goal FROM goals WHERE daily_calorie_goal IS NOT NULL"
+                )
+                daily_calorie_goal_row = cursor.fetchone()
+                daily_calorie_goal = daily_calorie_goal_row[0] if daily_calorie_goal_row else None
+                self.daily_calorie_goal_label.setText(f"Daily Calorie Goal: {daily_calorie_goal}")
+            except Exception as e:
+                print(f"Error fetching daily calorie goal: {e}")
+                self.daily_calorie_goal_label.setText("Daily Calorie Goal: --")
+
+        if (int(total_calories) > int(daily_calorie_goal)):
+            self.calorie_label.setStyleSheet(f"color: {calories_burned_red};")
+            self.daily_calorie_goal_label.setStyleSheet(f"color: {calories_burned_red};")
+        else:
+            self.calorie_label.setStyleSheet(f"color: {hover_light_green};")
+            self.daily_calorie_goal_label.setStyleSheet(f"color: {hover_light_green};")     
 
     def keyPressEvent(self, event):
         """Handle keyboard press of the DEL button"""
@@ -1047,6 +1068,19 @@ class Graphs(QWidget):
                 )
             exercise_rows = cursor.fetchall()
 
+            # Fetch latest daily calorie goal (if any)
+            cursor.execute(
+                """
+                SELECT daily_calorie_goal
+                FROM goals
+                WHERE daily_calorie_goal IS NOT NULL
+                ORDER BY updated_date DESC, id DESC
+                LIMIT 1
+                """
+            )
+            calorie_goal_row = cursor.fetchone()
+            daily_calorie_goal = float(calorie_goal_row[0]) if calorie_goal_row else None
+
         # Build a continuous date range and fill missing days with zero
         calorie_date_to_total = {r[0]: r[1] for r in food_rows}
         exercise_date_to_total = {r[0]: r[1] for r in exercise_rows}
@@ -1099,6 +1133,16 @@ class Graphs(QWidget):
             self.graph.bar(dates, food_totals, color=active_dark_green, alpha=0.7, label='Calories Intake')
             self.graph.bar(dates, exercise_totals, color=calories_burned_red, alpha=0.7, bottom=food_totals, label='Calorie Burned')
             self.graph.bar(dates, overburn, color=overburn_orange, alpha=0.7, label='Overburn')
+
+            # Plot horizontal line for daily calorie goal if available
+            if daily_calorie_goal is not None:
+                self.graph.axhline(
+                    y=daily_calorie_goal,
+                    color=calories_burned_red,
+                    linestyle='--',
+                    linewidth=1.5,
+                    label='Daily Calorie Goal'
+                )
 
             self.graph.set_title("Daily Calories - Consumed vs Burned", color=white)
             self.graph.set_xlabel("Date", color=white)
@@ -1371,7 +1415,6 @@ class Goals(QWidget):
         # Update daily calorie goal display
         if daily_calorie_goal is not None:
             # Display as integer if it's a whole number, otherwise show one decimal place
-            print("Daily calorie goal fetched from database: ", daily_calorie_goal)
             if daily_calorie_goal == int(daily_calorie_goal):
                 self.daily_calorie_goal.setText(f"Daily Calorie Goal: {int(daily_calorie_goal)} kcal")
             else:
@@ -2637,8 +2680,6 @@ class HealthApp(QMainWindow):
         toast.add_actions(label="Open App", launch="") 
         toast.add_actions(label="Dismiss", launch="")
         toast.show()
-
-
 
 
 # --- Run App ---

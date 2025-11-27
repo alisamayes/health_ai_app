@@ -37,11 +37,12 @@ Tab 2: Food Tracker → form to enter meals, calories, macros
 Tab 3: Exercise Tracker → log workouts, sets/reps, time
 Tab 4: Graphs/Progress → matplotlib charts inside PyQt
 Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
+Tab 5: Pantry → add/remove items to pantry to keep track of what you have available
 Tab 6: Shopping List → add/remove grocery items
 
-core_todo_list = [ "desktop promts", "daily reccomended calorie intake"]
-extra_todo_list = ["calorie suggestions based on input factors", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
-completed_todo_list = ["AI suggested meal substitues", "Food tracker", "exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations""meal plan/ ideas",
+core_todo_list = [ "desktop promts" ]
+extra_todo_list = ["panty page", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
+completed_todo_list = ["calorie suggestions based on input factors", "daily reccomended calorie intake", "AI suggested meal substitues", "Food tracker", "exercise tracker", "app styling", "weight goal", "graphs of both over time period", "AI chat bot for health advice", "weekly weigh in reminders", "basic desktop notifcations", "meal plan/ ideas"]
 """
 
 
@@ -119,13 +120,6 @@ def init_db():
                 updated_date TEXT NOT NULL
             )
         """)
-        # DEV TESTING REMOVE LATER:     Add daily_calorie_goal and weight_loss_timeframe columns if they don't exist (for existing databases)
-        try:
-            cursor.execute("ALTER TABLE goals ADD COLUMN daily_calorie_goal REAL")
-            cursor.execute("ALTER TABLE goals ADD COLUMN weight_loss_timeframe REAL")
-        except sqlite3.OperationalError:
-            # Column already exists, ignore
-            pass
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS meal_plan (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +132,7 @@ def init_db():
                 Sunday TEXT
             )
         """)
+
 
 class HomePage(QWidget):
     """
@@ -1151,9 +1146,17 @@ class Graphs(QWidget):
             self.graph.legend()
             
             # Label x-axis only when number of points is manageable
-            if len(dates) <= 20:
+            if len(dates) <= 32:
                 self.graph.set_xticks(range(len(dates)))
                 self.graph.set_xticklabels(display_dates, rotation=45, ha='right')
+                # After you have:
+                if daily_calorie_goal is not None:
+                    for i in range(len(dates)):
+                        if (food_totals[i] + exercise_totals[i]) > daily_calorie_goal:
+                            self.graph.get_xticklabels()[i].set_color(calories_burned_red)
+                        else:
+                            self.graph.get_xticklabels()[i].set_color(white)
+
             else:
                 self.graph.set_xticks([])
             self.canvas.figure.tight_layout()
@@ -2051,6 +2054,16 @@ class MealPlan(QWidget):
         for day_widget in self.day_widgets:
             day_widget.day_header.setEnabled(meal_plan_ai_enabled)
 
+class Pantry(QWidget):
+    """
+    This class creates the pantry page of the app.
+    It contains a list of items in the pantry and a button to add a new item.
+    The items are saved to the database when the user adds or removes them.
+    """
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout()
+
 class AIWorker(QObject):
     """
     This class is a worker class to handle AI requests in a separate thread.
@@ -2221,6 +2234,7 @@ class Settings(QWidget):
         
         # Desktop notification test button
         self.desktop_notif = QPushButton("Desktop Notification Test")
+
         # Button to allow user to import a database to use for the app
         self.import_database_button = QPushButton("Import Database")
         self.import_database_button.clicked.connect(self.import_database)
@@ -2575,21 +2589,28 @@ class HealthApp(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # Add tabs
+        # Create and then add tabs to the tab widget
         self.home_page = HomePage()
-        self.Settings = Settings()
-        self.MealPlan = MealPlan()
+        self.food_tracker = FoodTracker()
+        self.exercise_tracker = ExerciseTracker()
+        self.graphs = Graphs()
+        self.goals = Goals()
+        self.meal_plan = MealPlan()
+        self.pantry = Pantry()
+        self.chat_bot = ChatBot()
+        self.settings = Settings()
         self.tabs.addTab(self.home_page, "Home")
-        self.tabs.addTab(FoodTracker(), "Food Tracker")
-        self.tabs.addTab(ExerciseTracker(), "Exercise Tracker")
-        self.tabs.addTab(Graphs(), "Graphs")
-        self.tabs.addTab(Goals(), "Goals")
-        self.tabs.addTab(self.MealPlan, "Meal Plans")
-        self.tabs.addTab(ChatBot(), "Chat Bot")
-        self.tabs.addTab(self.Settings, "Settings")
+        self.tabs.addTab(self.food_tracker, "Food Tracker")
+        self.tabs.addTab(self.exercise_tracker, "Exercise Tracker")
+        self.tabs.addTab(self.graphs, "Graphs")
+        self.tabs.addTab(self.goals, "Goals")
+        self.tabs.addTab(self.meal_plan, "Meal Plans")
+        self.tabs.addTab(self.pantry, "Pantry")
+        self.tabs.addTab(self.chat_bot, "Chat Bot")
+        self.tabs.addTab(self.settings, "Settings")
         
         # Connect meal plan AI checkbox to update MealPlan button states
-        self.Settings.meal_plan_ai_checkbox.stateChanged.connect(self.MealPlan.update_header_buttons_state)
+        self.settings.meal_plan_ai_checkbox.stateChanged.connect(self.meal_plan.update_header_buttons_state)
 
         # Setup system tray icon for desktop notifications
         icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
@@ -2599,11 +2620,11 @@ class HealthApp(QMainWindow):
         self.tray.setVisible(True)
         self.tray.setToolTip("Mindful Mäuschen")
         
-        # Connect the notification button from HomePage
-        self.Settings.desktop_notif.clicked.connect(self.send_desktop_notif)
-        
+        # Connect the notification button in the settings page to the send_desktop_notif function
+        self.settings.desktop_notif.clicked.connect(self.send_desktop_notif)   
+
         # Connect startup checkbox from Settings
-        self.Settings.startup_checkbox.stateChanged.connect(
+        self.settings.startup_checkbox.stateChanged.connect(
             lambda state: self.handle_startup_toggle(state)
         )
         # Update Windows startup registry based on persistent setting
@@ -2620,15 +2641,15 @@ class HealthApp(QMainWindow):
     def handle_startup_toggle(self, state):
         """Handle startup checkbox state change"""
         # Update Windows startup registry based on checkbox state
-        self.Settings.toggle_startup(state, self.startup_settings)
+        self.settings.toggle_startup(state, self.startup_settings)
         # Save the startup setting to persistent storage
-        self.Settings.save_startup_setting()
+        self.settings.save_startup_setting()
     
     def update_windows_startup(self):
         """Update Windows startup registry based on persistent setting"""
-        startup_enabled = self.Settings.startup_checkbox.isChecked()
+        startup_enabled = self.settings.startup_checkbox.isChecked()
         if startup_enabled:
-            app_path = self.Settings.get_app_path()
+            app_path = self.settings.get_app_path()
             self.startup_settings.setValue("MindfulMauschen", app_path)
         else:
             self.startup_settings.remove("MindfulMauschen")
@@ -2675,7 +2696,7 @@ class HealthApp(QMainWindow):
         )
 
         # If the silent notifications are disabled, set the audio to the default beep
-        if not self.Settings.silent_notif_checkbox.isChecked():
+        if not self.settings.silent_notif_checkbox.isChecked():
             toast.set_audio(audio.Default, loop=False)            
         toast.add_actions(label="Open App", launch="") 
         toast.add_actions(label="Dismiss", launch="")

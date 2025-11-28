@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog,
-    QAbstractItemView
+    QAbstractItemView, QListWidget, QListWidgetItem
 )
 
 # This will only work for myself as it is my API key. Other potential users will need to get their own and add it to the .env file. As this is a personal project, this isnt an issue for the forseeable future.
@@ -130,6 +130,13 @@ def init_db():
                 Friday TEXT,
                 Saturday TEXT,
                 Sunday TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pantry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item TEXT NOT NULL,
+                weight INTEGER NOT NULL
             )
         """)
 
@@ -2064,6 +2071,128 @@ class Pantry(QWidget):
         super().__init__()
         self.layout = QVBoxLayout()
 
+        input_layout = QHBoxLayout()
+        self.add_item_button = QPushButton("Add Item")
+        self.add_item_button.clicked.connect(self.add_entry)
+        input_layout.addWidget(self.add_item_button)
+
+        self.pantry_layout = QVBoxLayout()
+        self.pantry_label = QLabel("Pantry")
+        self.pantry_items = QListWidget()
+        self.pantry_layout.addWidget(self.pantry_label)
+        self.pantry_layout.addWidget(self.pantry_items)
+        
+        self.shopping_list_layout = QVBoxLayout()
+        self.shopping_list_label = QLabel("Shopping List")
+        self.shopping_list_items = QListWidget()
+        self.shopping_list_layout.addWidget(self.shopping_list_label)
+        self.shopping_list_layout.addWidget(self.shopping_list_items)
+
+        self.layout.addLayout(input_layout)
+        self.layout.addLayout(self.pantry_layout)
+        self.layout.addLayout(self.shopping_list_layout)
+        self.setLayout(self.layout)
+
+        self.load_pantry()
+
+    def add_entry(self):
+        """Show dialog to create a new pantry item entry."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add item to pantry")
+        dialog.setModal(True)
+
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(12)
+
+        message_label = QLabel("What item would you like to add to your pantry?")
+        message_label.setWordWrap(True)
+        self.layout.addWidget(message_label)
+
+        input_layout = QFormLayout()
+        item_input = QLineEdit(dialog)
+        item_input.setPlaceholderText("Enter item name")
+        weight_input = QLineEdit(dialog)
+        weight_input.setPlaceholderText("Enter weight in grams")
+        input_layout.addRow("Item:", item_input)
+        input_layout.addRow("Weight:", weight_input)
+        self.layout.addLayout(input_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        add_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        add_button.setText("Add")
+        cancel_button.setText("Cancel")
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        self.layout.addWidget(button_box)
+        dialog.setLayout(self.layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        item = item_input.text().strip()
+        if not item:
+            return
+
+        try:
+            weight = int(weight_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "Add Entry", "Weight must be a whole number.")
+            return
+
+        with use_db("write") as cursor:
+            cursor.execute(
+                "INSERT INTO pantry (item, weight) VALUES (?, ?)",
+                (item, weight),
+            )
+        self.load_pantry()
+
+    def load_pantry(self):
+        """Load the pantry items from the database"""
+        with use_db("read") as cursor:
+            cursor.execute("SELECT id, item, weight FROM pantry")
+            pantry_items = cursor.fetchall()
+        self.pantry_items.clear()
+        for item_id, item_name, weight in pantry_items:
+            list_item = QListWidgetItem(f"{item_name} ({weight} g)")
+            list_item.setData(Qt.ItemDataRole.UserRole, item_id)  # Store ID for deletion
+            self.pantry_items.addItem(list_item)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard press of the DEL button"""
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_selected_item()
+        else:
+            # Pass other key events to the parent class
+            super().keyPressEvent(event)
+
+    def delete_selected_item(self):
+        """Deletes the selected item from the database"""
+        selected_items = self.pantry_items.selectedItems()
+        if not selected_items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Confirmation",
+            f"Delete {len(selected_items)} item(s) from pantry?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        # Delete the selected items from database
+        with use_db("write") as cursor:
+            for item in selected_items:
+                item_id = item.data(Qt.ItemDataRole.UserRole)
+                if item_id:
+                    cursor.execute("DELETE FROM pantry WHERE id = ?", (item_id,))
+        
+        # Reload the pantry to reflect changes
+        self.load_pantry()
+
 class AIWorker(QObject):
     """
     This class is a worker class to handle AI requests in a separate thread.
@@ -2583,6 +2712,15 @@ class HealthApp(QMainWindow):
                 border: none;
                 padding: 8px 16px;
                 border-radius: 6px;
+            }}
+            QListWidget {{
+                background-color: {background_dark_gray};
+                color: {white};
+                border: 2px solid {border_gray};
+                border-radius: 6px;
+            }}
+            QListWidget::item {{
+                padding: 8px;
             }}
         """)
 

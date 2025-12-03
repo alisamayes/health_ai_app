@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHBoxLayout, QInputDialog, QMessageBox, QDateEdit, QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QSystemTrayIcon, QCheckBox, QTextEdit, QToolButton, QFileDialog,
-    QAbstractItemView, QListWidget, QListWidgetItem
+    QAbstractItemView, QListWidget, QListWidgetItem, QSplitter,
 )
 
 # This will only work for myself as it is my API key. Other potential users will need to get their own and add it to the .env file. As this is a personal project, this isnt an issue for the forseeable future.
@@ -139,7 +139,6 @@ def init_db():
                 weight INTEGER NOT NULL
             )
         """)
-
 
 class HomePage(QWidget):
     """
@@ -1812,6 +1811,65 @@ class Goals(QWidget):
     def daily_calories_calculation_on_ai_error(self, error_message):
         """Handle AI request error"""
         print(error_message)
+        
+class MealPlan(QWidget):
+    """
+    This class creates the meal plan page of the app.
+    It contains a layout for the days of the week, and a widget for each day.
+    The widget for each day are interactive and allow the user to edit the meal list for the day.
+    The meal list is saved to the database when the user edits it.
+    Note: A lot of the functionality for this tab is found in the DayWidget and PlannerOptionsDialog classes.
+    """
+    def __init__(self):
+        super().__init__()
+        
+        # Initialize QSettings for persistent settings
+        self.settings = QSettings("MindfulMauschen", "HealthApp")
+
+        with use_db("write") as cursor:
+            # Ensure there is exactly one row to update against (id = 1)
+            cursor.execute("SELECT COUNT(*) FROM meal_plan")
+            count_row = cursor.fetchone()
+            existing_count = count_row[0] if count_row else 0
+            if existing_count == 0:
+                cursor.execute(
+                    """
+                    INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
+                    VALUES ('', '', '', '', '', '', '')
+                    """
+                )
+
+        self.layout = QVBoxLayout()
+        
+        # One widget for each day of the week
+        self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        # Create main horizontal layout for all days
+        self.days_layout = QHBoxLayout()
+        self.days_layout.setSpacing(2)  # Minimal spacing between columns
+        self.days_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Create a widget for each day
+        self.day_widgets = []
+        for day in self.days:
+            day_widget = DayWidget(day, self.days)
+            self.day_widgets.append(day_widget)
+            # Add stretch to make each day widget expand equally
+            self.days_layout.addWidget(day_widget, 1)  # Stretch factor of 1 for equal distribution
+
+        
+        # Add the days layout to main layout
+        self.layout.addLayout(self.days_layout)
+        self.setLayout(self.layout)
+
+        # If the meal plan AI is disabled, make the daywidgets headers buttons disabled 
+        self.update_header_buttons_state()
+    
+    def update_header_buttons_state(self):
+        """Update the enabled/disabled state of day header buttons based on meal plan AI setting"""
+        meal_plan_ai_enabled = self.settings.value("meal_plan_ai_enabled", False, type=bool)
+        for day_widget in self.day_widgets:
+            day_widget.day_header.setEnabled(meal_plan_ai_enabled)
 
 class DayWidget(QWidget):
     """
@@ -1899,47 +1957,82 @@ class DayWidget(QWidget):
             return
 
 
-    def ai_suggest_day_meal_plan(self):
-        """Suggest a meal plan for the day using AI with option chips. TODO: Add dietry requirement options for the prompt and cut out AI fluff."""
+    @staticmethod
+    def _build_meal_plan_prompt(current_text: str, options: dict) -> str:
+        """
+        Helper to build the AI prompt for the meal plan based on current text
+        and the selected dialog options.
+        """
+
+        meal_types = ["breakfast", "lunch", "dinner"]
+        meal_types_text = ", ".join(meal_types)
+        # Base request
+        AI_promt = (
+            "Can you suggest a meal plan for the day by giving me suggestions on what to eat? "
+            "The meal plan should include " + meal_types_text + ". "
+            "Please just provide the meal plan and nothing else. "
+        )
+
+        
+
+        # Collect additional criteria (e.g. healthy, cheap, etc.)
+        additional_criteria = [key for key, value in options.items() if value]
+
+        # Pantry handling is special – we both use it as a flag and also
+        # pull pantry contents into the prompt.
+        if options.get("use_pantry"):
+            with use_db("read") as cursor:
+                cursor.execute("SELECT item, weight FROM pantry")
+                pantry_items = cursor.fetchall()
+            AI_promt += (
+                "I have the following items in my pantry: "
+                + ", ".join([item for item, weight in pantry_items])
+                + ". "
+            )
+            # Remove from criteria list so it isn't also used as an adjective.
+            additional_criteria = [c for c in additional_criteria if c != "use_pantry"]
+
+        # Turn the remaining criteria into a human-readable phrase.
+        if len(additional_criteria) == 1:
+            AI_promt += f"I want the meal plan to be {additional_criteria[0]}. "
+        elif len(additional_criteria) > 1:
+            AI_promt += "I want the meal plan to be " + ", ".join(additional_criteria) + ". "
+
+        # Include the current meal plan in the prompt if it exists
+        if current_text:
+            AI_promt += (
+                "The current meal plan is: "
+                + current_text
+                + ". You can use this as a starting point, make changes to it or scrap it entirely if it doesnt fit the criteria."
+            )
+
+        return AI_promt
+
+    def ai_suggest_day_meal_plan(self, options: dict):
+        """
+        Suggest a meal plan for the day using AI with option chips.
+
+        The chip selection dialog is injected via the @planner_options_dialog decorator.
+        """
         current_text = self.meal_list.toPlainText()
-        dialog = PlannerOptionsDialog(self, current_text)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            # if the user has decided to use the AI feature, form a prompt for it in proper readable english
-            AI_promt = "Can you suggest a meal plan for the day by giving me suggestions on what to eat? "
-            options = dialog.values() # get the selected options from the popup box and add them to a list
-            additional_criteria = []
-            for key, value in options.items():
-                if value:
-                    additional_criteria.append(key)
+        AI_promt = self._build_meal_plan_prompt(current_text, options)
 
-            # Add the additional criteria to the prompt in proper readable english
-            if len(additional_criteria) == 1:
-                AI_promt += "I want the meal plan to be " + additional_criteria[0] + ". "
-            elif len(additional_criteria) > 1: # add "," between the criteria except for the last one which has "and"
-                AI_promt += "I want the meal plan to be " + ", ".join(additional_criteria[:-1]) + " and " + additional_criteria[-1] + ". "
-            # Include the current meal plan in the prompt if it exists
-            if current_text:
-                AI_promt += "The current meal plan is: " + current_text + ". You can use this as a starting point, make changes to it or scrap it entirely if it doesnt fit the criteria."
-            
-            #debugging print, remove later
-            print(AI_promt)
+        # Debugging print, remove later if desired
+        print(AI_promt)
 
-            # Create worker and run in background thread
-            worker = AIWorker(AI_promt)
-            worker.finished.connect(self.meal_plan_on_ai_response)
-            worker.error.connect(self.meal_plan_on_ai_error)
-            
-            # Store worker reference to prevent garbage collection
-            self.current_worker = worker
-            self.ai_request_in_progress = True
-            
-            # Run AI request in background thread
-            thread = threading.Thread(target=worker.run)
-            thread.daemon = True
-            thread.start() 
+        # Create worker and run in background thread
+        worker = AIWorker(AI_promt)
+        worker.finished.connect(self.meal_plan_on_ai_response)
+        worker.error.connect(self.meal_plan_on_ai_error)
 
-        else:
-            return
+        # Store worker reference to prevent garbage collection
+        self.current_worker = worker
+        self.ai_request_in_progress = True
+
+        # Run AI request in background thread
+        thread = threading.Thread(target=worker.run)
+        thread.daemon = True
+        thread.start()
 
     def meal_plan_on_ai_response(self, response):
         """Handle successful AI response"""
@@ -1949,43 +2042,85 @@ class DayWidget(QWidget):
         """Handle AI request error"""
         print(error_message)
 
+
+def planner_options_dialog(*, title: str, label_text: str, chips: list):
+    """
+    Decorator factory to wrap a method so that it first shows a chip-style options
+    dialog and then passes the selected options dict into the wrapped method.
+
+    Usage:
+        @planner_options_dialog(
+            title="AI Meal Planner Options",
+            label_text="Choose any options you want to include:",
+            chips=[("healthy", "Healthy"), ...],
+        )
+        def my_method(self, options: dict):
+            ...
+    """
+
+    def decorator(method):
+        def wrapper(self, *args, **kwargs):
+            dialog = PlannerOptionsDialog(
+                parent=self,
+                title=title,
+                label_text=label_text,
+                chips=chips,
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                options = dialog.values()
+                return method(self, options, *args, **kwargs)
+            # User cancelled – do nothing
+            return None
+
+        return wrapper
+
+    return decorator
+
+
 class PlannerOptionsDialog(QDialog):
     """
-    Popup dialog showing chip-style toggle options using checkable QToolButtons.
-    Note: This was done as I didnt want to use checkboxes as they are not as visually appealing or consistent with the rest of the app.
-    While this is more code and more complex, I belive it is worth it for the better user experience.
+    Generic popup dialog showing chip-style toggle options using checkable
+    `QToolButton`s. The concrete titles, label text and chips are provided
+    by the caller (or by the `planner_options_dialog` decorator).
     """
-    def __init__(self, parent=None, current_text=None):
+
+    def __init__(self, parent=None, *, title: str, label_text: str, chips: list):
+        """
+        Parameters
+        ----------
+        title:
+            Window title for the dialog.
+        label_text:
+            Instruction text shown above the chips.
+        chips:
+            List of `(key, display_text)` tuples. The returned `values()` dict
+            will be keyed by `key`.
+        """
         super().__init__(parent)
-        self.setWindowTitle("AI Meal Planner Options")
-        self.current_text = current_text
+        self.setWindowTitle(title)
+        self._chip_buttons: dict[str, QToolButton] = {}
+
         main_layout = QVBoxLayout(self)
 
-        label = QLabel("Choose any options you want to include:")
+        label = QLabel(label_text)
         main_layout.addWidget(label)
 
         chips_layout = QHBoxLayout()
         chips_layout.setSpacing(6)
 
-        self.healthy = self._make_chip("Healthy")
-        self.cheap = self._make_chip("Cheap")
-        self.vegetarian = self._make_chip("Vegetarian")
-        self.vegan = self._make_chip("Vegan")
-        self.quick = self._make_chip("Quick")
-
-        chips_layout.addWidget(self.healthy)
-        chips_layout.addWidget(self.cheap)
-        chips_layout.addWidget(self.vegetarian)
-        chips_layout.addWidget(self.vegan)
-        chips_layout.addWidget(self.quick)
+        for key, display_text in chips:
+            btn = self._make_chip(display_text)
+            self._chip_buttons[key] = btn
+            chips_layout.addWidget(btn)
 
         main_layout.addLayout(chips_layout)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
-
 
     def _make_chip(self, text: str) -> QToolButton:
         btn = QToolButton(self)
@@ -1995,71 +2130,23 @@ class PlannerOptionsDialog(QDialog):
         return btn
 
     def values(self) -> dict:
-        return {
-            "healthy": self.healthy.isChecked(),
-            "cheap": self.cheap.isChecked(),
-            "vegetarian": self.vegetarian.isChecked(),
-            "vegan": self.vegan.isChecked(),
-            "quick": self.quick.isChecked(),
-        }
-        
-class MealPlan(QWidget):
-    """
-    This class creates the meal plan page of the app.
-    It contains a layout for the days of the week, and a widget for each day.
-    The widget for each day are interactive and allow the user to edit the meal list for the day.
-    The meal list is saved to the database when the user edits it.
-    """
-    def __init__(self):
-        super().__init__()
-        
-        # Initialize QSettings for persistent settings
-        self.settings = QSettings("MindfulMauschen", "HealthApp")
+        """Return a dict mapping each chip key to its checked state."""
+        return {key: btn.isChecked() for key, btn in self._chip_buttons.items()}
 
-        with use_db("write") as cursor:
-            # Ensure there is exactly one row to update against (id = 1)
-            cursor.execute("SELECT COUNT(*) FROM meal_plan")
-            count_row = cursor.fetchone()
-            existing_count = count_row[0] if count_row else 0
-            if existing_count == 0:
-                cursor.execute(
-                    """
-                    INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
-                    VALUES ('', '', '', '', '', '', '')
-                    """
-                )
 
-        self.layout = QVBoxLayout()
-        
-        # One widget for each day of the week
-        self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
-        # Create main horizontal layout for all days
-        self.days_layout = QHBoxLayout()
-        self.days_layout.setSpacing(2)  # Minimal spacing between columns
-        self.days_layout.setContentsMargins(5, 5, 5, 5)
-        
-        # Create a widget for each day
-        self.day_widgets = []
-        for day in self.days:
-            day_widget = DayWidget(day, self.days)
-            self.day_widgets.append(day_widget)
-            # Add stretch to make each day widget expand equally
-            self.days_layout.addWidget(day_widget, 1)  # Stretch factor of 1 for equal distribution
-
-        
-        # Add the days layout to main layout
-        self.layout.addLayout(self.days_layout)
-        self.setLayout(self.layout)
-
-        # If the meal plan AI is disabled, make the daywidgets headers buttons disabled 
-        self.update_header_buttons_state()
-    
-    def update_header_buttons_state(self):
-        """Update the enabled/disabled state of day header buttons based on meal plan AI setting"""
-        meal_plan_ai_enabled = self.settings.value("meal_plan_ai_enabled", False, type=bool)
-        for day_widget in self.day_widgets:
-            day_widget.day_header.setEnabled(meal_plan_ai_enabled)
+# Attach the planner options dialog decorator to the DayWidget AI method
+DayWidget.ai_suggest_day_meal_plan = planner_options_dialog(
+    title="AI Meal Planner Options",
+    label_text="Choose any options you want to include:",
+    chips=[
+        ("healthy", "Healthy"),
+        ("cheap", "Cheap"),
+        ("vegetarian", "Vegetarian"),
+        ("vegan", "Vegan"),
+        ("quick", "Quick"),
+        ("use_pantry", "Use Pantry"),
+    ],
+)(DayWidget.ai_suggest_day_meal_plan)
 
 class Pantry(QWidget):
     """
@@ -2074,7 +2161,10 @@ class Pantry(QWidget):
         input_layout = QHBoxLayout()
         self.add_item_button = QPushButton("Add Item")
         self.add_item_button.clicked.connect(self.add_entry)
+        self.generate_shopping_list_button = QPushButton("Generate Shopping List")
+        self.generate_shopping_list_button.clicked.connect(self.generate_shopping_list)
         input_layout.addWidget(self.add_item_button)
+        input_layout.addWidget(self.generate_shopping_list_button)
 
         self.pantry_layout = QVBoxLayout()
         self.pantry_label = QLabel("Pantry")
@@ -2088,9 +2178,19 @@ class Pantry(QWidget):
         self.shopping_list_layout.addWidget(self.shopping_list_label)
         self.shopping_list_layout.addWidget(self.shopping_list_items)
 
+
+        pantry_container = QWidget()
+        pantry_container.setLayout(self.pantry_layout)
+
+        shopping_container = QWidget()
+        shopping_container.setLayout(self.shopping_list_layout)
+
+        self.pantry_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.pantry_splitter.addWidget(pantry_container)
+        self.pantry_splitter.addWidget(shopping_container)
+
         self.layout.addLayout(input_layout)
-        self.layout.addLayout(self.pantry_layout)
-        self.layout.addLayout(self.shopping_list_layout)
+        self.layout.addWidget(self.pantry_splitter)
         self.setLayout(self.layout)
 
         self.load_pantry()
@@ -2192,6 +2292,78 @@ class Pantry(QWidget):
         
         # Reload the pantry to reflect changes
         self.load_pantry()
+
+    @planner_options_dialog(
+        title="Shopping List Options",
+        label_text="For which days of the meal plan do you want to generate a shopping list for and do you want to ignore items you already have in your pantry? If ignored items will be added to the list regardless of if you already have them.",
+        chips=[
+            ("monday", "Monday"),
+            ("tuesday", "Tuesday"),
+            ("wednesday", "Wednesday"),
+            ("thursday", "Thursday"),
+            ("friday", "Friday"),
+            ("saturday", "Saturday"),
+            ("sunday", "Sunday"),
+            ("ignore_pantry", "Ignore items already in pantry"),
+        ],
+    )
+    def generate_shopping_list(self, options: dict, *_, **__):
+        """
+        Generate a shopping list based on the meal plan page.
+
+        The `options` dict comes from the shared `PlannerOptionsDialog` via
+        the `@planner_options_dialog` decorator.
+        """
+        # TODO: use AI to generate a shopping list. Perhaps make the meal plan generate ingridients too and pull from there, or do a seperate request entirely
+        print("Shopping list options selected:", options)
+        # get the meal plan from the meal plan page for the selected days to use for the shopping list  
+        meal_plans = ""
+        day_key_to_column = {
+            "monday": "Monday",
+            "tuesday": "Tuesday",
+            "wednesday": "Wednesday",
+            "thursday": "Thursday",
+            "friday": "Friday",
+            "saturday": "Saturday",
+            "sunday": "Sunday",
+        }
+
+        with use_db("read") as cursor:
+            for key, selected in options.items():
+                # skip non-day options
+                if not selected or key == "ignore_pantry":
+                    continue
+
+                column = day_key_to_column.get(key)
+                if not column:
+                    continue
+
+                cursor.execute(f"SELECT {column} FROM meal_plan WHERE id = 1")
+                row = cursor.fetchone()
+                day_text = row[0] if row else ""
+                if day_text:
+                    meal_plans += f"{column}: {day_text}\n"
+        
+        ai_prompt = "Generate a shopping list of ingridients based on these meal plans: " + meal_plans + "Please only provide an itemised list of ingridients and nothing else."
+        print(ai_prompt)
+    
+        worker = AIWorker(ai_prompt)
+        worker.finished.connect(self.shopping_list_on_ai_response)
+        worker.error.connect(self.shopping_list_on_ai_error)
+
+        thread = threading.Thread(target=worker.run)
+        thread.daemon = True
+        thread.start()
+
+    def shopping_list_on_ai_response(self, response):
+        """Handle successful AI response"""
+        print(response)
+        self.shopping_list_items.addItem(response)
+        # TODO: properly itemis response, add to list individually and save to database
+
+    def shopping_list_on_ai_error(self, error_message):
+        """Handle AI request error"""
+        print("Error: " + error_message)
 
 class AIWorker(QObject):
     """
@@ -2721,6 +2893,52 @@ class HealthApp(QMainWindow):
             }}
             QListWidget::item {{
                 padding: 8px;
+            }}
+            QScrollBar:vertical {{
+                background: {background_dark_gray};
+                width: 10px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {border_gray};
+                min-height: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {hover_gray};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background-color: none;
+                height: 0px;
+            }}
+            QScrollBar:horizontal {{
+                background-color: {background_dark_gray};
+                height: 10px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {border_gray};
+                min-width: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {hover_gray};
+            }}
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal,
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {{
+                background-color: none;
+                width: 0px;
+            }}
+            QSplitter::handle {{
+                background-color: {border_gray};
+                border: none;
+                padding: 2px;
+                border-radius: 4px;
             }}
         """)
 

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from PyQt6.QtCore import QDate, Qt, QTimer, QSettings, QObject, pyqtSignal as Signal
+from PyQt6.QtCore import QDate, Qt, QTimer, QSettings, QObject, pyqtSignal as Signal, QEvent
 from PyQt6.QtGui import QPixmap, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -31,14 +31,16 @@ client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
 
 """
 This is the starter file for an AI-driven self health and tracking app I am working on, using Python for the main part, PyQt for the GUI and SQLite for the database
-Plan
+Layout
 Tab 1: Home page → App name, navigation
 Tab 2: Food Tracker → form to enter meals, calories, macros
 Tab 3: Exercise Tracker → log workouts, sets/reps, time
 Tab 4: Graphs/Progress → matplotlib charts inside PyQt
-Tab 5: Meal Plan & Ideas → static list first, then AI alternative suggestions
-Tab 5: Pantry → add/remove items to pantry to keep track of what you have available
-Tab 6: Shopping List → add/remove grocery items
+Tab 5: Goals → current weight, target weight, daily calorie goal, weight loss timeframe
+Tab 6: Meal Plan & Ideas → static list first, then AI alternative suggestions
+Tab 7: Pantry → add/remove items to pantry to keep track of what you have available and a shopping list generated from the pantry and meal plan
+Tab 8: Chat Bot → AI chat bot for health advice
+Tab 9: Settings → app settings and preferences
 
 core_todo_list = [ "desktop promts" ]
 extra_todo_list = ["panty page", "goal advice", "sleep diary", "health by day trends", "AI driven improvements", "mobile support", "silent auto open app on bootup"]
@@ -137,6 +139,12 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item TEXT NOT NULL,
                 weight INTEGER NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS shopping_list (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item TEXT NOT NULL
             )
         """)
 
@@ -1172,6 +1180,52 @@ class Graphs(QWidget):
             self.graph.set_yticks([])
         self.canvas.draw()
 
+
+def run_ai_request(success_handler: str, error_handler: str):
+    """
+    Decorator factory to wrap a method that returns an AI prompt string.
+    The decorator automatically sets up the AIWorker, connects handlers,
+    stores the worker reference, sets the in-progress flag, and starts the thread.
+
+    Usage:
+        @run_ai_request(
+            success_handler="on_ai_response",
+            error_handler="on_ai_error"
+        )
+        def my_method(self, ...):
+            return "AI prompt string here"
+    """
+
+    def decorator(method):
+        def wrapper(self, *args, **kwargs):
+            # Get the prompt from the wrapped method
+            prompt = method(self, *args, **kwargs)
+            if not prompt:
+                return
+
+            # Get handler methods by name
+            success_method = getattr(self, success_handler)
+            error_method = getattr(self, error_handler)
+
+            # Create worker and connect signals
+            worker = AIWorker(prompt)
+            worker.finished.connect(success_method)
+            worker.error.connect(error_method)
+
+            # Store worker reference to prevent garbage collection
+            self.current_worker = worker
+            self.ai_request_in_progress = True
+
+            # Run AI request in background thread
+            thread = threading.Thread(target=worker.run)
+            thread.daemon = True
+            thread.start()
+
+        return wrapper
+
+    return decorator
+
+
 class Goals(QWidget):
     """
     This is the goals page of the app. It is used to track the weight goal of the user.
@@ -1724,10 +1778,12 @@ class Goals(QWidget):
         self.canvas.flush_events()
         self.canvas.draw()
 
+    @run_ai_request(
+        success_handler="daily_calories_calculation_on_ai_response",
+        error_handler="daily_calories_calculation_on_ai_error"
+    )
     def calculate_daily_calorie_goal_ai(self, age, height, gender, activity_level, timeframe, current_weight, target_weight):
         """Calculate the daily calorie goal using AI"""
-        
-        
         self.weight_loss_timeframe.setText(f"Weight Loss Timeframe: {timeframe} months")
         if timeframe is not None:
             with use_db("write") as cursor:
@@ -1751,24 +1807,11 @@ class Goals(QWidget):
                         (timeframe, datetime.now().strftime("%Y-%m-%d")),
                     )
 
-        
-        # Use AI to calculate the daily calorie goal
-        AI_promt = ("Calculate the daily calorie goal for a " + str(age) + " year old " + str(gender) + " with a height of " + str(height) + " cm and an activity level of " + str(activity_level) + ". "
-                    "They are currently " + str(current_weight) + " kg and the target weight is " + str(target_weight) + " kg over a timeframe of " + str(timeframe) + " months. "
-                    "Please tailor your response in the format of only the numerical value of the daily calorie goal and nothing else.")
-
-        worker = AIWorker(AI_promt)
-        worker.finished.connect(self.daily_calories_calculation_on_ai_response)
-        worker.error.connect(self.daily_calories_calculation_on_ai_error)
-        
-        # Store worker reference to prevent garbage collection
-        self.current_worker = worker
-        self.ai_request_in_progress = True
-        
-        # Run AI request in background thread
-        thread = threading.Thread(target=worker.run)
-        thread.daemon = True
-        thread.start()
+        # Build and return the AI prompt
+        AI_prompt = ("Calculate the daily calorie goal for a " + str(age) + " year old " + str(gender) + " with a height of " + str(height) + " cm and an activity level of " + str(activity_level) + ". "
+                "They are currently " + str(current_weight) + " kg and the target weight is " + str(target_weight) + " kg over a timeframe of " + str(timeframe) + " months. "
+                "Please tailor your response in the format of only the numerical value of the daily calorie goal and nothing else.")
+        return AI_prompt
 
     def daily_calories_calculation_on_ai_response(self, response):
         """Handle successful AI response"""
@@ -2008,6 +2051,10 @@ class DayWidget(QWidget):
 
         return AI_promt
 
+    @run_ai_request(
+        success_handler="meal_plan_on_ai_response",
+        error_handler="meal_plan_on_ai_error"
+    )
     def ai_suggest_day_meal_plan(self, options: dict):
         """
         Suggest a meal plan for the day using AI with option chips.
@@ -2017,22 +2064,7 @@ class DayWidget(QWidget):
         current_text = self.meal_list.toPlainText()
         AI_promt = self._build_meal_plan_prompt(current_text, options)
 
-        # Debugging print, remove later if desired
-        print(AI_promt)
-
-        # Create worker and run in background thread
-        worker = AIWorker(AI_promt)
-        worker.finished.connect(self.meal_plan_on_ai_response)
-        worker.error.connect(self.meal_plan_on_ai_error)
-
-        # Store worker reference to prevent garbage collection
-        self.current_worker = worker
-        self.ai_request_in_progress = True
-
-        # Run AI request in background thread
-        thread = threading.Thread(target=worker.run)
-        thread.daemon = True
-        thread.start()
+        return AI_promt
 
     def meal_plan_on_ai_response(self, response):
         """Handle successful AI response"""
@@ -2158,44 +2190,67 @@ class Pantry(QWidget):
         super().__init__()
         self.layout = QVBoxLayout()
 
-        input_layout = QHBoxLayout()
-        self.add_item_button = QPushButton("Add Item")
-        self.add_item_button.clicked.connect(self.add_entry)
+        # Section for the pantry
+        self.pantry_layout = QVBoxLayout()
+        # Header for labels and buttons
+        self.pantry_header_layout = QHBoxLayout()
+        self.pantry_label = QLabel("Pantry")
+        self.add_item_pantry_button = QPushButton("Add Item to Pantry")
+        self.add_item_pantry_button.clicked.connect(self.add_entry_pantry)
+        self.clear_pantry_button = QPushButton("Clear Pantry")
+        self.clear_pantry_button.clicked.connect(self.clear_pantry)
+        self.pantry_header_layout.addWidget(self.pantry_label)
+        self.pantry_header_layout.addWidget(self.add_item_pantry_button)
+        self.pantry_header_layout.addWidget(self.clear_pantry_button)
+        # List of items in the pantry
+        self.pantry_items = QListWidget()
+        # Add the header and list to the pantry layout
+        self.pantry_layout.addLayout(self.pantry_header_layout)
+        self.pantry_layout.addWidget(self.pantry_items)
+
+        # Section for the shopping list
+        self.shopping_list_layout = QVBoxLayout()
+        # Header for labels and buttons
+        self.shopping_header_layout = QHBoxLayout()
+        self.shopping_list_label = QLabel("Shopping List")
+        self.add_item_shopping_button = QPushButton("Add Item to Shopping List")
+        self.add_item_shopping_button.clicked.connect(self.add_entry_shopping)
         self.generate_shopping_list_button = QPushButton("Generate Shopping List")
         self.generate_shopping_list_button.clicked.connect(self.generate_shopping_list)
-        input_layout.addWidget(self.add_item_button)
-        input_layout.addWidget(self.generate_shopping_list_button)
-
-        self.pantry_layout = QVBoxLayout()
-        self.pantry_label = QLabel("Pantry")
-        self.pantry_items = QListWidget()
-        self.pantry_layout.addWidget(self.pantry_label)
-        self.pantry_layout.addWidget(self.pantry_items)
-        
-        self.shopping_list_layout = QVBoxLayout()
-        self.shopping_list_label = QLabel("Shopping List")
+        self.clear_shopping_list_button = QPushButton("Clear Shopping List")
+        self.clear_shopping_list_button.clicked.connect(self.clear_shopping_list)
+        self.shopping_header_layout.addWidget(self.shopping_list_label)
+        self.shopping_header_layout.addWidget(self.add_item_shopping_button)
+        self.shopping_header_layout.addWidget(self.generate_shopping_list_button)
+        self.shopping_header_layout.addWidget(self.clear_shopping_list_button)
+        # List of items in the shopping list
         self.shopping_list_items = QListWidget()
-        self.shopping_list_layout.addWidget(self.shopping_list_label)
+        # Add the header and list to the shopping list layout
+        self.shopping_list_layout.addLayout(self.shopping_header_layout)
         self.shopping_list_layout.addWidget(self.shopping_list_items)
 
-
+        # Add the pantry and shopping list layouts to the main layout. They need to be in separate containers to be able to split them vertically with the splitter.
         pantry_container = QWidget()
         pantry_container.setLayout(self.pantry_layout)
-
         shopping_container = QWidget()
         shopping_container.setLayout(self.shopping_list_layout)
 
+        # Install event filters so DEL works when focus is on either list widget
+        self.pantry_items.installEventFilter(self)
+        self.shopping_list_items.installEventFilter(self)
+
+        # Add the pantry and shopping list containers to the splitter and add the splitter to the main layout
         self.pantry_splitter = QSplitter(Qt.Orientation.Vertical)
         self.pantry_splitter.addWidget(pantry_container)
         self.pantry_splitter.addWidget(shopping_container)
-
-        self.layout.addLayout(input_layout)
         self.layout.addWidget(self.pantry_splitter)
         self.setLayout(self.layout)
 
+        # Load the pantry and shopping list to ensure up to date
         self.load_pantry()
+        self.load_shopping_list()
 
-    def add_entry(self):
+    def add_entry_pantry(self):
         """Show dialog to create a new pantry item entry."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Add item to pantry")
@@ -2248,6 +2303,46 @@ class Pantry(QWidget):
             )
         self.load_pantry()
 
+    def add_entry_shopping(self):
+        """Show dialog to create a new shopping list item entry."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add item to shopping list")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("What item would you like to add to your shopping list?")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        input_layout = QFormLayout()
+        item_input = QLineEdit(dialog)
+        item_input.setPlaceholderText("Enter item name")
+        input_layout.addRow("Item:", item_input)
+        layout.addLayout(input_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        add_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        add_button.setText("Add")
+        cancel_button.setText("Cancel")
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        dialog.setLayout(layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        item = item_input.text().strip()
+        if not item:
+            return
+        with use_db("write") as cursor:
+            cursor.execute("INSERT INTO shopping_list (item) VALUES (?)", (item,))
+        self.load_shopping_list()
+
     def load_pantry(self):
         """Load the pantry items from the database"""
         with use_db("read") as cursor:
@@ -2259,15 +2354,48 @@ class Pantry(QWidget):
             list_item.setData(Qt.ItemDataRole.UserRole, item_id)  # Store ID for deletion
             self.pantry_items.addItem(list_item)
 
-    def keyPressEvent(self, event):
-        """Handle keyboard press of the DEL button"""
-        if event.key() == Qt.Key.Key_Delete:
-            self.delete_selected_item()
-        else:
-            # Pass other key events to the parent class
-            super().keyPressEvent(event)
+    def load_shopping_list(self):
+        """Load the shopping list from the database"""
+        with use_db("read") as cursor:
+            cursor.execute("SELECT id, item FROM shopping_list")
+            shopping_list_items = cursor.fetchall()
+        self.shopping_list_items.clear()
+        for item_id, item_name in shopping_list_items:
+            list_item = QListWidgetItem(item_name)
+            list_item.setData(Qt.ItemDataRole.UserRole, item_id)  # Store ID for deletion
+            self.shopping_list_items.addItem(list_item)
 
-    def delete_selected_item(self):
+    def clear_pantry(self):
+        """Clears the pantry from the database"""
+        with use_db("write") as cursor:
+            cursor.execute("DELETE FROM pantry")
+        self.load_pantry()
+
+    def clear_shopping_list(self):
+        """Clears the shopping list from the database"""
+        with use_db("write") as cursor:
+            cursor.execute("DELETE FROM shopping_list")
+        self.load_shopping_list()
+
+    def keyPressEvent(self, event):
+        """Fallback keyboard handling; normal keys go to the base class."""
+        super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event):
+        """
+        Catch DEL key presses when focus is on one of the list widgets and
+        route them to the appropriate delete handler.
+        """
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Delete:
+            if obj is self.pantry_items:
+                self.delete_selected_item_pantry()
+                return True
+            if obj is self.shopping_list_items:
+                self.delete_selected_item_shopping()
+                return True
+        return super().eventFilter(obj, event)
+
+    def delete_selected_item_pantry(self):
         """Deletes the selected item from the database"""
         selected_items = self.pantry_items.selectedItems()
         if not selected_items:
@@ -2293,6 +2421,29 @@ class Pantry(QWidget):
         # Reload the pantry to reflect changes
         self.load_pantry()
 
+    def delete_selected_item_shopping(self):
+        """Deletes the selected item from the database"""
+        selected_items = self.shopping_list_items.selectedItems()
+        if not selected_items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Confirmation",
+            f"Delete {len(selected_items)} item(s) from shopping list?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        with use_db("write") as cursor:
+            for item in selected_items:
+                item_id = item.data(Qt.ItemDataRole.UserRole)
+                if item_id:
+                    cursor.execute("DELETE FROM shopping_list WHERE id = ?", (item_id,))
+        self.load_shopping_list()
+
     @planner_options_dialog(
         title="Shopping List Options",
         label_text="For which days of the meal plan do you want to generate a shopping list for and do you want to ignore items you already have in your pantry? If ignored items will be added to the list regardless of if you already have them.",
@@ -2306,6 +2457,10 @@ class Pantry(QWidget):
             ("sunday", "Sunday"),
             ("ignore_pantry", "Ignore items already in pantry"),
         ],
+    )
+    @run_ai_request(
+        success_handler="shopping_list_on_ai_response",
+        error_handler="shopping_list_on_ai_error"
     )
     def generate_shopping_list(self, options: dict, *_, **__):
         """
@@ -2345,25 +2500,25 @@ class Pantry(QWidget):
                     meal_plans += f"{column}: {day_text}\n"
         
         ai_prompt = "Generate a shopping list of ingridients based on these meal plans: " + meal_plans + "Please only provide an itemised list of ingridients and nothing else."
-        print(ai_prompt)
-    
-        worker = AIWorker(ai_prompt)
-        worker.finished.connect(self.shopping_list_on_ai_response)
-        worker.error.connect(self.shopping_list_on_ai_error)
-
-        thread = threading.Thread(target=worker.run)
-        thread.daemon = True
-        thread.start()
+        
+        return ai_prompt
 
     def shopping_list_on_ai_response(self, response):
         """Handle successful AI response"""
         print(response)
-        self.shopping_list_items.addItem(response)
-        # TODO: properly itemis response, add to list individually and save to database
+        for item in response.split("\n"):
+            self.shopping_list_items.addItem(item)
+            #check if item is empty or whitespace only or "**Shopping List:**", if so skip adding to database
+            if item.strip() != "" and item.strip() != "**Shopping List:**":
+                with use_db("write") as cursor:
+                    cursor.execute("INSERT INTO shopping_list (item) VALUES (?)", (item.strip(),))
+
+        self.load_shopping_list()
 
     def shopping_list_on_ai_error(self, error_message):
         """Handle AI request error"""
         print("Error: " + error_message)
+
 
 class AIWorker(QObject):
     """
@@ -2440,15 +2595,19 @@ class ChatBot(QWidget):
         # Update the height
         self.input_field.setMaximumHeight(int(new_height))
 
+    @run_ai_request(
+        success_handler="chat_bot_on_ai_response",
+        error_handler="chat_bot_on_ai_error"
+    )
     def handle_send(self):
         """Handle send button click - create async AI request"""
         user_message = self.input_field.toPlainText().strip()
         if not user_message:
-            return
+            return None
         
         # Prevent multiple simultaneous requests
         if self.ai_request_in_progress:
-            return
+            return None
 
         # Display user message
         self.chat_area.append(f"You: {user_message}")
@@ -2460,19 +2619,8 @@ class ChatBot(QWidget):
         # Disable send button and input
         self.set_ui_state(False)
         
-        # Create worker and run in background thread
-        worker = AIWorker(user_message)
-        worker.finished.connect(self.chat_bot_on_ai_response)
-        worker.error.connect(self.chat_bot_on_ai_error)
-        
-        # Store worker reference to prevent garbage collection
-        self.current_worker = worker
-        self.ai_request_in_progress = True
-        
-        # Run AI request in background thread
-        thread = threading.Thread(target=worker.run)
-        thread.daemon = True
-        thread.start()
+        # Return the prompt for the AI worker decorator to handle
+        return user_message
     
     def set_ui_state(self, enabled):
         """Enable or disable UI elements during AI request"""

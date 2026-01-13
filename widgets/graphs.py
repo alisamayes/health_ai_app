@@ -4,7 +4,7 @@ Graphs widget for the Health App.
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox
 from datetime import datetime, timedelta
-from database import use_db
+from database import use_db, get_earliest_food_date, get_daily_calorie_goal, get_food_calorie_totals_for_timeframe, get_exercise_calorie_totals_for_timeframe
 from config import (
     background_dark_gray, white, border_gray, active_dark_green,
     calories_burned_red, overburn_orange
@@ -86,10 +86,8 @@ class Graphs(QWidget):
             tuple: (start_date_str, end_date_str) as "yyyy-MM-dd" strings, or (None, end_date_str) for "Full History".
         """
         # Find earliest entry_date in the database. The start date will not be earlier than this.
-        with use_db("read") as cursor:
-            cursor.execute("SELECT MIN(entry_date) FROM foods")
-            earliest_row = cursor.fetchone()
-        earliest_qdate = QDate.fromString(earliest_row[0], "yyyy-MM-dd") if earliest_row and earliest_row[0] else None
+        earliest_date = get_earliest_food_date()
+        earliest_qdate = QDate.fromString(earliest_date, "yyyy-MM-dd") if earliest_date else None
 
         end_qdate = QDate.currentDate() # End date is the current date.
         if timeframe_label == "1 Week":
@@ -103,9 +101,7 @@ class Graphs(QWidget):
         elif timeframe_label == "1 Year":
             start_qdate = end_qdate.addYears(-1).addDays(1)
         elif timeframe_label == "Full History": # First entry in the database to the current date.
-            return None, end_qdate.toString("yyyy-MM-dd")
-        else:
-            start_qdate = end_qdate.addDays(-6)
+            start_qdate = earliest_qdate
 
         # If earliest date and start date < earliest date, it means we dont have entries goign that far back and so just keep the range within the bounds of known data.
         if earliest_qdate and start_qdate < earliest_qdate:
@@ -143,65 +139,9 @@ class Graphs(QWidget):
         timeframe = self.timeframe_selector.currentText()
         start_str, end_str = self.get_date_range(timeframe)
 
-        with use_db("read") as cursor:
-            # Fetch food calorie data
-            if start_str is None:
-                cursor.execute(
-                    """
-                    SELECT entry_date, SUM(calories) AS total
-                    FROM foods
-                    GROUP BY entry_date
-                    ORDER BY entry_date ASC
-                    """
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT entry_date, SUM(calories) AS total
-                    FROM foods
-                    WHERE entry_date BETWEEN ? AND ?
-                    GROUP BY entry_date
-                    ORDER BY entry_date ASC
-                    """,
-                    (start_str, end_str),
-                )
-            food_rows = cursor.fetchall()
-
-            # Fetch exercise calorie data
-            if start_str is None:
-                cursor.execute(
-                    """
-                    SELECT entry_date, SUM(calories) AS total
-                    FROM exercise
-                    GROUP BY entry_date
-                    ORDER BY entry_date ASC
-                    """
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT entry_date, SUM(calories) AS total
-                    FROM exercise
-                    WHERE entry_date BETWEEN ? AND ?
-                    GROUP BY entry_date
-                    ORDER BY entry_date ASC
-                    """,
-                    (start_str, end_str),
-                )
-            exercise_rows = cursor.fetchall()
-
-            # Fetch latest daily calorie goal (if any)
-            cursor.execute(
-                """
-                SELECT daily_calorie_goal
-                FROM goals
-                WHERE daily_calorie_goal IS NOT NULL
-                ORDER BY updated_date DESC, id DESC
-                LIMIT 1
-                """
-            )
-            calorie_goal_row = cursor.fetchone()
-            daily_calorie_goal = float(calorie_goal_row[0]) if calorie_goal_row else None
+        food_rows = get_food_calorie_totals_for_timeframe(start_str, end_str)
+        exercise_rows = get_exercise_calorie_totals_for_timeframe(start_str, end_str)
+        daily_calorie_goal = get_daily_calorie_goal()
 
         # Build a continuous date range and fill missing days with zero
         calorie_date_to_total = {r[0]: r[1] for r in food_rows}

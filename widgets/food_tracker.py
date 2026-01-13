@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 import os
 import requests
 from difflib import get_close_matches
-from database import use_db
+from database import use_db, add_food, get_food_entries, update_food_entry, delete_food_entry, get_daily_calorie_goal, get_all_distinct_foods, get_most_common_foods
 from config import calories_burned_red, hover_light_green
 
 class FoodTracker(QWidget):
@@ -161,23 +161,13 @@ class FoodTracker(QWidget):
         # A selection of 5 buttons with the most common foods and their calories.
         # TODO: See if can impliment some sort of NN model to suggest the most common foods and their calories.
         quickadd_layout = QHBoxLayout()
-        with use_db("read") as cursor:
-            cursor.execute("""
-                SELECT MIN(food) as food, AVG(calories) as calories
-                FROM foods
-                GROUP BY UPPER(food)
-                ORDER BY COUNT(*) DESC
-                LIMIT 5
-            """)
-            most_common_foods = cursor.fetchall()
-            for food in most_common_foods:
-                food_name = food[0]
-                food_calories = food[1]
-                text = f"{food_name} | {int(round(food_calories))}"
-                quickadd_button = QPushButton(text)
-                # Connect the button click to the handler with the specific food data
-                quickadd_button.clicked.connect(lambda checked, name=food_name, cal=food_calories: handle_quickadd(name, cal))
-                quickadd_layout.addWidget(quickadd_button)
+        most_common_foods = get_most_common_foods()
+        for food in most_common_foods:
+            text = f"{food[0]} | {int(round(food[1]))}"
+            quickadd_button = QPushButton(text)
+            # Connect the button click to the handler with the specific food data
+            quickadd_button.clicked.connect(lambda checked, food=food: handle_quickadd(food[0], food[1]))
+            quickadd_layout.addWidget(quickadd_button)
         layout.addLayout(quickadd_layout)
 
         dialog.setLayout(layout)
@@ -197,11 +187,7 @@ class FoodTracker(QWidget):
 
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        with use_db("write") as cursor:
-            cursor.execute(
-                "INSERT INTO foods (food, calories, entry_date) VALUES (?, ?, ?)",
-                (food, calories, date_str),
-            )
+        add_food(food, calories, date_str)
         self.load_entries()
 
     def edit_entry(self):
@@ -226,19 +212,15 @@ class FoodTracker(QWidget):
 
         # Get IDs for this date only
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT id, food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            entries = cursor.fetchall()
+        entries = get_food_entries(date_str)
 
         index = row_number - 1
         if index < 0 or index >= len(entries):
             QMessageBox.warning(self, "Edit Entry", "Invalid row number.")
             return
 
-        target_id, current_food, current_calories = entries[index]
+        current_food = entries[index][1]
+        current_calories = entries[index][2]
 
         # Create edit dialog
         dialog = QDialog(self)
@@ -309,11 +291,7 @@ class FoodTracker(QWidget):
             return
 
         # Update the database entry
-        with use_db("write") as cursor:
-            cursor.execute(
-                "UPDATE foods SET food = ?, calories = ? WHERE id = ?",
-                (food, calories, target_id),
-            )
+        update_food_entry(entries[index][0], food, calories)
         self.load_entries()
 
     def remove_entry(self):
@@ -339,21 +317,14 @@ class FoodTracker(QWidget):
 
         # Get IDs for this date only
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT id FROM foods WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            ids = [row[0] for row in cursor.fetchall()]
+        ids = [row[0] for row in get_food_entries(date_str)]
 
         index = row_number - 1
         if index < 0 or index >= len(ids):
             QMessageBox.warning(self, "Remove Entry", "Invalid row number.")
             return
 
-        target_id = ids[index]
-        with use_db("write") as cursor:
-            cursor.execute("DELETE FROM foods WHERE id = ?", (target_id,))
+        delete_food_entry(ids[index])
 
         self.load_entries()
 
@@ -376,43 +347,35 @@ class FoodTracker(QWidget):
         """
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            rows = cursor.fetchall()
+        rows = get_food_entries(date_str)
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            self.table.setItem(i, 0, QTableWidgetItem(row[0]))
-            self.table.setItem(i, 1, QTableWidgetItem(str(row[1])))
+            self.table.setItem(i, 0, QTableWidgetItem(row[1]))
+            self.table.setItem(i, 1, QTableWidgetItem(str(row[2])))
 
         # Resize columns to fit content after loading data
         self.table.resizeColumnsToContents()
 
         # Update total calories label
-        total_calories = sum(row[1] for row in rows) if rows else 0
+        total_calories = sum(row[2] for row in rows) if rows else 0
         self.calorie_label.setText(f"Daily Calorie Intake: {total_calories}")
 
-        with use_db("read") as cursor:
-            try:
-                cursor.execute(
-                    "SELECT daily_calorie_goal FROM goals WHERE daily_calorie_goal IS NOT NULL"
-                )
-                daily_calorie_goal_row = cursor.fetchone()
-                daily_calorie_goal = daily_calorie_goal_row[0] if daily_calorie_goal_row else None
-                self.daily_calorie_goal_label.setText(f"Daily Calorie Goal: {daily_calorie_goal}")
-            except Exception as e:
-                print(f"Error fetching daily calorie goal: {e}")
-                self.daily_calorie_goal_label.setText("Daily Calorie Goal: --")
-
-        if (int(total_calories) > int(daily_calorie_goal)):
-            self.calorie_label.setStyleSheet(f"color: {calories_burned_red};")
-            self.daily_calorie_goal_label.setStyleSheet(f"color: {calories_burned_red};")
+        daily_calorie_goal = get_daily_calorie_goal()
+        if daily_calorie_goal is not None:
+            self.daily_calorie_goal_label.setText(f"Daily Calorie Goal: {daily_calorie_goal}")
+            # Only compare if goal is set
+            if total_calories > daily_calorie_goal:
+                self.calorie_label.setStyleSheet(f"color: {calories_burned_red};")
+                self.daily_calorie_goal_label.setStyleSheet(f"color: {calories_burned_red};")
+            else:
+                self.calorie_label.setStyleSheet(f"color: {hover_light_green};")
+                self.daily_calorie_goal_label.setStyleSheet(f"color: {hover_light_green};")
         else:
-            self.calorie_label.setStyleSheet(f"color: {hover_light_green};")
-            self.daily_calorie_goal_label.setStyleSheet(f"color: {hover_light_green};")     
+            self.daily_calorie_goal_label.setText("Daily Calorie Goal: --")
+            # Reset to default color when no goal is set
+            self.calorie_label.setStyleSheet("")
+            self.daily_calorie_goal_label.setStyleSheet("")     
 
     def keyPressEvent(self, event):
         """
@@ -449,20 +412,14 @@ class FoodTracker(QWidget):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
         # Get all records for this date with their IDs
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT id, food, calories FROM foods WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            rows = cursor.fetchall()
-
-        # Delete the selected records
-        with use_db("write") as cursor:
-            for row_index in selected_rows:
-                if row_index < len(rows):
-                    record_id = rows[row_index][0]  # Get the ID from the database query
-                    cursor.execute("DELETE FROM foods WHERE id = ?", (record_id,))
-
+        all_entries = get_food_entries(date_str)
+        
+        # Delete only the selected records by mapping row indices to IDs
+        for row_index in selected_rows:
+            if row_index < len(all_entries):
+                entry_id = all_entries[row_index][0]  # Get ID from the entry
+                delete_food_entry(entry_id)
+        
         self.load_entries()
 
     def suggest_calories(self):
@@ -490,28 +447,14 @@ class FoodTracker(QWidget):
         if not user_input:
             return None
 
-        with use_db("read") as cursor:
-            # Get distinct food names to match against
-            cursor.execute("SELECT DISTINCT food FROM foods")
-            foods = [row[0] for row in cursor.fetchall() if row and row[0]]
+        foods = get_all_distinct_foods()
+        matches = get_close_matches(user_input, [food[0] for food in foods], n=1, cutoff=0.75)
+        if not matches:
+            return self.suggest_calories_from_usda(user_input)
 
-            # Find closest match with cutoff 0.75
-            matches = get_close_matches(user_input, foods, n=1, cutoff=0.75)
-            if not matches:
-                print("No matches found locally")
-                return self.suggest_calories_from_usda(user_input)
-
-            matched_food = matches[0]
-            # Use average calories across entries for the matched food
-            cursor.execute("SELECT AVG(calories) FROM foods WHERE food = ?", (matched_food,))
-            row = cursor.fetchone()
-
-        if not row or row[0] is None:
-            #print("No calories found for the matched food")
-            return None
+        average_calories = sum(food[1] for food in foods if food[0] == matches[0]) / len(foods for food in foods if food[0] == matches[0])
+        return int(round(average_calories))
         
-        print(f"Calories found for the matched food: {row[0]}")
-        return int(round(row[0]))
 
     def suggest_calories_from_usda(self, user_input):
         """

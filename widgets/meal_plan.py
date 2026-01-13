@@ -3,7 +3,7 @@ MealPlan widget for the Health App.
 """
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-from database import use_db
+from database import create_meal_plan_row
 from widgets.day_widget import DayWidget
 
 class MealPlan(QWidget):
@@ -23,19 +23,6 @@ class MealPlan(QWidget):
         super().__init__()
         # Initialize QSettings for persistent settings
         self.settings = QSettings("MindfulMauschen", "HealthApp")
-
-        with use_db("write") as cursor:
-            # Ensure there is exactly one row to update against (id = 1)
-            cursor.execute("SELECT COUNT(*) FROM meal_plan")
-            count_row = cursor.fetchone()
-            existing_count = count_row[0] if count_row else 0
-            if existing_count == 0:
-                cursor.execute(
-                    """
-                    INSERT INTO meal_plan (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday)
-                    VALUES ('', '', '', '', '', '', '')
-                    """
-                )
 
         self.layout = QVBoxLayout()
         

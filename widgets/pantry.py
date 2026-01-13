@@ -5,12 +5,9 @@ from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QFormLayout,
-    QMessageBox, QFileDialog, QSplitter
+    QMessageBox, QSplitter
 )
-from datetime import datetime
-import os
-import shutil
-from database import use_db
+from database import add_pantry_item, add_shopping_list_item, get_pantry_items, get_shopping_list_items, clear_pantry, clear_shopping_list, delete_pantry_items, delete_shopping_list_items, get_meal_plan_for_day
 from utils import run_ai_request, planner_options_dialog
 
 class Pantry(QWidget):
@@ -139,11 +136,7 @@ class Pantry(QWidget):
             QMessageBox.warning(self, "Add Entry", "Weight must be a whole number.")
             return
 
-        with use_db("write") as cursor:
-            cursor.execute(
-                "INSERT INTO pantry (item, weight) VALUES (?, ?)",
-                (item, weight),
-            )
+        add_pantry_item(item, weight)
         self.load_pantry()
 
     def add_entry_shopping(self):
@@ -186,8 +179,7 @@ class Pantry(QWidget):
         item = item_input.text().strip()
         if not item:
             return
-        with use_db("write") as cursor:
-            cursor.execute("INSERT INTO shopping_list (item) VALUES (?)", (item,))
+        add_shopping_list_item(item)
         self.load_shopping_list()
 
     def load_pantry(self):
@@ -196,9 +188,7 @@ class Pantry(QWidget):
         Fetches all pantry items with their IDs and weights, and displays
         them in the pantry list widget in the format "item_name (weight g)".
         """
-        with use_db("read") as cursor:
-            cursor.execute("SELECT id, item, weight FROM pantry")
-            pantry_items = cursor.fetchall()
+        pantry_items = get_pantry_items()
         self.pantry_items.clear()
         for item_id, item_name, weight in pantry_items:
             list_item = QListWidgetItem(f"{item_name} ({weight} g)")
@@ -211,9 +201,7 @@ class Pantry(QWidget):
         Fetches all shopping list items with their IDs and displays
         them in the shopping list widget.
         """
-        with use_db("read") as cursor:
-            cursor.execute("SELECT id, item FROM shopping_list")
-            shopping_list_items = cursor.fetchall()
+        shopping_list_items = get_shopping_list_items()
         self.shopping_list_items.clear()
         for item_id, item_name in shopping_list_items:
             list_item = QListWidgetItem(item_name)
@@ -225,8 +213,7 @@ class Pantry(QWidget):
         Clear all items from the pantry in the database.
         Deletes all rows from the pantry table and refreshes the display.
         """
-        with use_db("write") as cursor:
-            cursor.execute("DELETE FROM pantry")
+        clear_pantry()
         self.load_pantry()
 
     def clear_shopping_list(self):
@@ -234,8 +221,7 @@ class Pantry(QWidget):
         Clear all items from the shopping list in the database.
         Deletes all rows from the shopping_list table and refreshes the display.
         """
-        with use_db("write") as cursor:
-            cursor.execute("DELETE FROM shopping_list")
+        clear_shopping_list()
         self.load_shopping_list()
 
     def keyPressEvent(self, event):
@@ -287,14 +273,8 @@ class Pantry(QWidget):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        # Delete the selected items from database
-        with use_db("write") as cursor:
-            for item in selected_items:
-                item_id = item.data(Qt.ItemDataRole.UserRole)
-                if item_id:
-                    cursor.execute("DELETE FROM pantry WHERE id = ?", (item_id,))
-        
-        # Reload the pantry to reflect changes
+        # Delete the selected items from database and reload the pantry
+        delete_pantry_items(selected_items)
         self.load_pantry()
 
     def delete_selected_item_shopping(self):
@@ -317,11 +297,7 @@ class Pantry(QWidget):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        with use_db("write") as cursor:
-            for item in selected_items:
-                item_id = item.data(Qt.ItemDataRole.UserRole)
-                if item_id:
-                    cursor.execute("DELETE FROM shopping_list WHERE id = ?", (item_id,))
+        delete_shopping_list_items(selected_items)
         self.load_shopping_list()
 
     @planner_options_dialog(
@@ -356,8 +332,6 @@ class Pantry(QWidget):
         Returns:
             str: The AI prompt string for generating the shopping list.
         """
-        # TODO: use AI to generate a shopping list. Perhaps make the meal plan generate ingridients too and pull from there, or do a seperate request entirely
-        print("Shopping list options selected:", options)
         # get the meal plan from the meal plan page for the selected days to use for the shopping list  
         meal_plans = ""
         day_key_to_column = {
@@ -370,23 +344,17 @@ class Pantry(QWidget):
             "sunday": "Sunday",
         }
 
-        with use_db("read") as cursor:
-            for key, selected in options.items():
-                # skip non-day options
-                if not selected or key == "ignore_pantry":
-                    continue
-
-                column = day_key_to_column.get(key)
-                if not column:
-                    continue
-
-                cursor.execute(f"SELECT {column} FROM meal_plan WHERE id = 1")
-                row = cursor.fetchone()
-                day_text = row[0] if row else ""
-                if day_text:
-                    meal_plans += f"{column}: {day_text}\n"
+        for key, selected in options.items():
+            if not selected or key == "ignore_pantry":
+                continue
+            column = day_key_to_column.get(key)
+            if not column:
+                continue
+            meal_plan_for_day = get_meal_plan_for_day(column)
+            if meal_plan_for_day:
+                meal_plans += meal_plan_for_day + "\n"
         
-        ai_prompt = "Generate a shopping list of ingridients based on these meal plans: " + meal_plans + "Please only provide an itemised list of ingridients and nothing else."
+        ai_prompt = "Generate a shopping list of ingridients based on these meal plans: " + meal_plans + "For your response please only provide an itemised list of ingridients and nothing else as this will be parsed into a list and added to the shopping list."
         
         return ai_prompt
 
@@ -394,18 +362,52 @@ class Pantry(QWidget):
         """
         Handle successful AI response for shopping list generation.
         Parses the response into individual items, adds them to the shopping list
-        widget, and saves them to the database (skipping empty lines and headers).
+        widget, and saves them to the database (skipping empty lines, headers, and formatting).
         
         Args:
             response (str): The AI-generated shopping list text.
-        """
-        print(response)
+        """        
+
+        def is_valid_shopping_item(item: str) -> bool: 
+            """AI written funtion that check if an item is a valid shopping list item (not formatting/header)."""
+            item = item.strip()
+            # Skip empty lines
+            if not item:
+                return False
+            # Skip markdown headers (lines starting with #)
+            if item.startswith("#"):
+                return False
+            # Skip common formatting patterns
+            if item in ["**Shopping List:**", "### Shopping List", "Shopping List"]:
+                return False
+            # Skip lines that are just separators or formatting
+            if item.startswith("---") or item.startswith("==="):
+                return False
+            # Skip lines that are just markdown list markers without content
+            if item in ["-", "*", "•"]:
+                return False
+            # Skip lines that are just instructions or notes
+            if item.lower().startswith("feel free") or item.lower().startswith("note:"):
+                return False
+            # Skip lines that are section headers (all caps or title case with no actual item)
+            if len(item) < 3:  # Too short to be a real item
+                return False
+            return True
+        
         for item in response.split("\n"):
-            self.shopping_list_items.addItem(item)
-            #check if item is empty or whitespace only or "**Shopping List:**", if so skip adding to database
-            if item.strip() != "" and item.strip() != "**Shopping List:**":
-                with use_db("write") as cursor:
-                    cursor.execute("INSERT INTO shopping_list (item) VALUES (?)", (item.strip(),))
+            item_cleaned = item.strip()
+            # Remove markdown list markers (-, *, •) and bullet points from the start
+            if item_cleaned.startswith("- "):
+                item_cleaned = item_cleaned[2:].strip()
+            elif item_cleaned.startswith("* "):
+                item_cleaned = item_cleaned[2:].strip()
+            elif item_cleaned.startswith("• "):
+                item_cleaned = item_cleaned[2:].strip()
+            
+            # Only add valid items
+            if is_valid_shopping_item(item_cleaned):
+                self.shopping_list_items.addItem(item_cleaned)
+                add_shopping_list_item(item_cleaned)
 
         self.load_shopping_list()
 
@@ -416,6 +418,5 @@ class Pantry(QWidget):
         Args:
             error_message (str): The error message from the AI request.
         """
-        print("Error: " + error_message)
 
 

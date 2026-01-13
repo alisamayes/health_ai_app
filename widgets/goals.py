@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QInputDialog, QMessageBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout
 )
 from datetime import datetime
-from database import use_db
+from database import use_db, add_weight, add_weight_loss_timeframe, add_daily_calorie_goal, get_current_weight, get_target_weight, get_weight_loss_timeframe, get_daily_calorie_goal, get_all_weight_entries, update_weight_entry, delete_weight_entry
 from config import background_dark_gray, white, border_gray, active_dark_green
 from utils import run_ai_request
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -97,7 +97,7 @@ class Goals(QWidget):
         self.canvas.mpl_connect('button_press_event', self.on_click)
         
         # Initial load
-        target_weight = self.get_target_weight()
+        target_weight = get_target_weight()
         self.load_graphs(target_weight)
 
     def input_current_weight(self):
@@ -117,18 +117,14 @@ class Goals(QWidget):
         )
         if ok:
             # Save to database
-            with use_db("write") as cursor:
-                cursor.execute(
-                    "INSERT INTO goals (current_weight, updated_date) VALUES (?, ?)",
-                    (weight, datetime.now().strftime("%Y-%m-%d")),
-                )
+            add_weight(weight, datetime.now().strftime("%Y-%m-%d"), "current")
             
             # Update button text
             self.current_weight.setText(f"Current Weight: {weight} kg")
             # Reload to update weight loss calculation and graph
             self.load_info()
             # Get target weight for graph y-axis limit
-            target_weight = self.get_target_weight()
+            target_weight = get_target_weight()
             self.load_graphs(target_weight)
 
     def input_target_weight(self):
@@ -148,11 +144,7 @@ class Goals(QWidget):
         )
         if ok:
             # Save to database
-            with use_db("write") as cursor:
-                cursor.execute(
-                    "INSERT INTO goals (target_weight, updated_date) VALUES (?, ?)",
-                    (weight, datetime.now().strftime("%Y-%m-%d")),
-                )
+            add_weight(weight, datetime.now().strftime("%Y-%m-%d"), "target")
             
             # Update button text
             self.target_weight.setText(f"Target Weight: {weight} kg")
@@ -221,19 +213,6 @@ class Goals(QWidget):
         # Show the dialog
         dialog.exec()
 
-    def get_target_weight(self):
-        """
-        Get the current target weight from the database.
-        
-        Returns:
-            float or None: The most recent target weight, or None if not set.
-        """
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
-            )
-            target_row = cursor.fetchone()
-        return target_row[0] if target_row else None
     
     def load_info(self):
         """
@@ -241,34 +220,10 @@ class Goals(QWidget):
         Updates the current weight, target weight, weight loss goal, timeframe,
         and daily calorie goal labels with the latest values from the database.
         """
-        with use_db("read") as cursor:
-            # Get latest current weight
-            cursor.execute(
-                "SELECT current_weight FROM goals WHERE current_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
-            )
-            current_row = cursor.fetchone()
-            current_weight = current_row[0] if current_row else None
-
-            # Get latest target weight
-            cursor.execute(
-                "SELECT target_weight FROM goals WHERE target_weight IS NOT NULL ORDER BY updated_date DESC LIMIT 1"
-            )
-            target_row = cursor.fetchone()
-            target_weight = target_row[0] if target_row else None
-            
-            # Get latest daily calorie goal
-            cursor.execute(
-                "SELECT daily_calorie_goal FROM goals WHERE daily_calorie_goal IS NOT NULL"
-            )
-            calorie_row = cursor.fetchone()
-            daily_calorie_goal = calorie_row[0] if calorie_row else None
-
-            # Get latest weight loss timeframe
-            cursor.execute(
-                "SELECT weight_loss_timeframe FROM goals WHERE weight_loss_timeframe IS NOT NULL"
-            )
-            timeframe_row = cursor.fetchone()
-            weight_loss_timeframe = timeframe_row[0] if timeframe_row else None
+        current_weight = get_current_weight()
+        target_weight = get_target_weight()
+        daily_calorie_goal = get_daily_calorie_goal()
+        weight_loss_timeframe = get_weight_loss_timeframe()
         
         # Update button texts
         if current_weight is not None:
@@ -318,17 +273,7 @@ class Goals(QWidget):
         Args:
             target_weight (float or None): The target weight to use as y-axis minimum, or None for default (50.0).
         """
-        with use_db("read") as cursor:
-            # Query for current weight entries with dates and IDs
-            cursor.execute(
-                """
-                SELECT id, current_weight, updated_date 
-                FROM goals 
-                WHERE current_weight IS NOT NULL 
-                ORDER BY updated_date ASC
-                """
-            )
-            rows = cursor.fetchall()
+        rows = get_all_weight_entries()
 
         ids = []
         dates = []
@@ -573,30 +518,10 @@ class Goals(QWidget):
             new_date_str = new_date.toString("yyyy-MM-dd")
             
             # Update database using the entry ID
-            self.update_weight_entry(entry_id, new_date_str, weight_input)
+            update_weight_entry(entry_id, weight_input, new_date_str)
             
-    def update_weight_entry(self, entry_id, new_date_str, new_weight):
-        """
-        Update the weight entry in the database using the entry ID.
-        
-        Args:
-            entry_id (int): The database ID of the entry to update.
-            new_date_str (str): The new date string in "yyyy-MM-dd" format.
-            new_weight (float): The new weight value.
-        """
-        with use_db("write") as cursor:
-            # Update the entry by ID
-            cursor.execute(
-                """
-                UPDATE goals 
-                SET current_weight = ?, updated_date = ?
-                WHERE id = ?
-                """,
-                (new_weight, new_date_str, entry_id),
-            )
-        
         # Reload the graph and refresh all labels
-        target_weight = self.get_target_weight()
+        target_weight = get_target_weight()
         self.load_graphs(target_weight)
         
         # Force complete refresh of the canvas and axis labels
@@ -611,11 +536,10 @@ class Goals(QWidget):
         Args:
             entry_id (int): The database ID of the entry to delete.
         """
-        with use_db("write") as cursor:
-            cursor.execute("DELETE FROM goals WHERE id = ?", (entry_id,))
+        delete_weight_entry(entry_id)
         
         # Reload the graph and refresh all labels
-        target_weight = self.get_target_weight()
+        target_weight = get_target_weight()
         self.load_graphs(target_weight)
         
         # Force complete refresh of the canvas and axis labels
@@ -647,26 +571,7 @@ class Goals(QWidget):
         """
         self.weight_loss_timeframe.setText(f"Weight Loss Timeframe: {timeframe} months")
         if timeframe is not None:
-            with use_db("write") as cursor:
-                # First try to update the most recent goals row
-                cursor.execute(
-                    """
-                    UPDATE goals
-                    SET weight_loss_timeframe = ?, updated_date = ?
-                    WHERE id = (
-                        SELECT id FROM goals
-                        ORDER BY updated_date DESC, id DESC
-                        LIMIT 1
-                    )
-                    """,
-                    (timeframe, datetime.now().strftime("%Y-%m-%d")),
-                )
-                # If no row was updated (fresh DB), insert a new one
-                if cursor.rowcount == 0:
-                    cursor.execute(
-                        "INSERT INTO goals (weight_loss_timeframe, updated_date) VALUES (?, ?)",
-                        (timeframe, datetime.now().strftime("%Y-%m-%d")),
-                    )
+            add_weight_loss_timeframe(timeframe, datetime.now().strftime("%Y-%m-%d"))
 
         # Build and return the AI prompt
         AI_prompt = ("Calculate the daily calorie goal for a " + str(age) + " year old " + str(gender) + " with a height of " + str(height) + " cm and an activity level of " + str(activity_level) + ". "
@@ -684,39 +589,14 @@ class Goals(QWidget):
             response (str): The AI-generated response containing the calorie goal.
         """
         try:
-            print(response)
-            calorie_value = float(response)
+            calorie_value = int(response)
         except ValueError:
             calorie_value = None
         
         if calorie_value is not None:
-            with use_db("write") as cursor:
-                # First try to update the most recent goals row
-                cursor.execute(
-                    """
-                    UPDATE goals
-                    SET daily_calorie_goal = ?, updated_date = ?
-                    WHERE id = (
-                        SELECT id FROM goals
-                        ORDER BY updated_date DESC, id DESC
-                        LIMIT 1
-                    )
-                    """,
-                    (calorie_value, datetime.now().strftime("%Y-%m-%d")),
-                )
-                # If no row was updated (fresh DB), insert a new one
-                if cursor.rowcount == 0:
-                    cursor.execute(
-                        "INSERT INTO goals (daily_calorie_goal, updated_date) VALUES (?, ?)",
-                        (calorie_value, datetime.now().strftime("%Y-%m-%d")),
-                    )
-            # Display as integer if it's a whole number, otherwise show one decimal place
-            if calorie_value == int(calorie_value):
-                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {int(calorie_value)} kcal")
-            else:
-                self.daily_calorie_goal.setText(f"Daily Calorie Goal: {calorie_value:.1f} kcal")
+            add_daily_calorie_goal(calorie_value, datetime.now().strftime("%Y-%m-%d"))
+            self.daily_calorie_goal.setText(f"Daily Calorie Goal: {calorie_value} kcal")
         else:
-            # If we can't extract a number, just display the response as-is
             self.daily_calorie_goal.setText(f"Daily Calorie Goal: {response}")
 
     def daily_calories_calculation_on_ai_error(self, error_message):

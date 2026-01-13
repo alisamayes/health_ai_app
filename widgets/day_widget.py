@@ -3,8 +3,8 @@ DayWidget widget for the Health App.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QMessageBox
-from database import use_db
 from utils import run_ai_request, planner_options_dialog
+from database import get_pantry_items, get_meal_plan_for_day, update_meal_plan_for_day
 
 class DayWidget(QWidget):
     """
@@ -56,13 +56,7 @@ class DayWidget(QWidget):
         # Guard against unexpected column name injection by validating against known days
         if self.day_name not in self.valid_days:
             return None
-        with use_db("read") as cursor:
-            # Select explicit column for the single row (id = 1)
-            cursor.execute(f"SELECT {self.day_name} FROM meal_plan WHERE id = 1")
-            row = cursor.fetchone()
-        if row is None:
-            return None
-        return row[0]
+        return get_meal_plan_for_day(self.day_name)
     
     def on_text_changed(self):
         """
@@ -70,20 +64,8 @@ class DayWidget(QWidget):
         Automatically saves the updated text to the database when the user edits it.
         """
         new_text = self.meal_list.toPlainText()
-        self.update_day_text_in_db(new_text)
+        update_meal_plan_for_day(self.day_name, new_text)
     
-    def update_day_text_in_db(self, new_text):
-        """
-        Update the meal text for this day in the database.
-        
-        Args:
-            new_text (str): The new meal plan text to save.
-        """
-        if self.day_name not in self.valid_days:
-            return
-        with use_db("write") as cursor:
-            # Update explicit column for the single row (id = 1)
-            cursor.execute(f"UPDATE meal_plan SET {self.day_name} = ? WHERE id = 1", (new_text,))
 
     def show_AI_meal_plan_popup(self):
         """
@@ -131,9 +113,7 @@ class DayWidget(QWidget):
         # Pantry handling is special – we both use it as a flag and also
         # pull pantry contents into the prompt.
         if options.get("use_pantry"):
-            with use_db("read") as cursor:
-                cursor.execute("SELECT item, weight FROM pantry")
-                pantry_items = cursor.fetchall()
+            pantry_items = get_pantry_items()
             AI_promt += (
                 "I have the following items in my pantry: "
                 + ", ".join([item for item, weight in pantry_items])

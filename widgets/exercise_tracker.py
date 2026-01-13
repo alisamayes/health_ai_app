@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QDateEdit,
     QAbstractItemView
 )
-from database import use_db
+from database import use_db, add_exercise, delete_exercise_entry, get_exercise_entries
 
 class ExerciseTracker(QWidget):
     """
@@ -106,11 +106,7 @@ class ExerciseTracker(QWidget):
 
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        with use_db("write") as cursor:
-            cursor.execute(
-                "INSERT INTO exercise (activity, calories, entry_date) VALUES (?, ?, ?)",
-                (activity, calories, date_str),
-            )
+        add_exercise(activity, calories, date_str)
 
         self.activity_input.clear()
         self.calorie_input.clear()
@@ -139,21 +135,13 @@ class ExerciseTracker(QWidget):
 
         # Get IDs for this date only
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT id FROM exercise WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            ids = [row[0] for row in cursor.fetchall()]
+        ids = [row[0] for row in get_exercise_entries(date_str)]
 
         index = row_number - 1
         if index < 0 or index >= len(ids):
             QMessageBox.warning(self, "Remove Entry", "Invalid row number.")
             return
-
-        target_id = ids[index]
-        with use_db("write") as cursor:
-            cursor.execute("DELETE FROM exercise WHERE id = ?", (target_id,))
+        delete_exercise_entry(ids[index])
 
         self.load_entries()
 
@@ -179,23 +167,18 @@ class ExerciseTracker(QWidget):
         """
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
 
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            rows = cursor.fetchall()
+        rows = get_exercise_entries(date_str)
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            self.table.setItem(i, 0, QTableWidgetItem(row[0]))
-            self.table.setItem(i, 1, QTableWidgetItem(str(row[1])))
+            self.table.setItem(i, 0, QTableWidgetItem(row[1]))
+            self.table.setItem(i, 1, QTableWidgetItem(str(row[2])))
 
         # Resize columns to fit content after loading data
         self.table.resizeColumnsToContents()
 
         # Update total calories label
-        total_calories = sum(row[1] for row in rows) if rows else 0
+        total_calories = sum(row[2] for row in rows) if rows else 0
         selected_date_display = self.date_selector.date().toString("dd-MM-yyyy")
         self.calorie_label.setText(f"Daily Calories ({selected_date_display}): {total_calories}")
 
@@ -234,19 +217,12 @@ class ExerciseTracker(QWidget):
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
         
         # Get all records for this date with their IDs
-        with use_db("read") as cursor:
-            cursor.execute(
-                "SELECT id, activity, calories FROM exercise WHERE entry_date = ? ORDER BY id DESC",
-                (date_str,),
-            )
-            rows = cursor.fetchall()
+        rows = get_exercise_entries(date_str)
 
         # Delete the selected records
-        with use_db("write") as cursor:
-            for row_index in selected_rows:
-                if row_index < len(rows):
-                    record_id = rows[row_index][0]  # Get the ID from the database query
-                    cursor.execute("DELETE FROM exercise WHERE id = ?", (record_id,))
+        for row_index in selected_rows:
+            if row_index < len(rows):
+                delete_exercise_entry(rows[row_index][0])
 
         self.load_entries()
 

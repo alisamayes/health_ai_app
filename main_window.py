@@ -5,6 +5,7 @@ Contains the HealthApp class that creates and manages the main application windo
 import os
 import sys
 from datetime import datetime, timedelta
+from unittest import result
 from winotify import Notification, audio
 from PyQt6.QtCore import QTimer, QSettings
 from PyQt6.QtGui import QIcon
@@ -13,7 +14,7 @@ from widgets import (
     HomePage, FoodTracker, ExerciseTracker, Graphs, Goals,
     MealPlan, Pantry, ChatBot, Settings
 )
-from database import use_db
+from database import check_weekly_weight_entry
 from config import (
     white, background_dark_gray, border_gray, button_active_light_gray,
     hover_gray, hover_light_green, active_dark_green
@@ -399,21 +400,10 @@ class HealthApp(QMainWindow):
         week_end = week_start + timedelta(days=6)
         week_end_str = week_end.strftime("%Y-%m-%d")
         
-        with use_db("read") as cursor:
-            # Check if a current_weight entry exists for this week (Monday to Sunday)
-            cursor.execute(
-                """
-                SELECT 1 FROM goals 
-                WHERE updated_date BETWEEN ? AND ?
-                AND current_weight IS NOT NULL
-                LIMIT 1
-                """,
-                (week_start_str, week_end_str),
-            )
-            result = cursor.fetchone()
+        weekly_entry = check_weekly_weight_entry(week_start_str, week_end_str)
         
         # If no weight entry exists for this week, send notification
-        if not result:
+        if not weekly_entry:
             self.send_desktop_notif()
 
     def send_desktop_notif(self):

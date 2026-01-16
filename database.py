@@ -3,7 +3,32 @@ Database utilities for the Health App.
 Contains context manager for database access and initialization functions.
 """
 import sqlite3
+import os
 from contextlib import contextmanager
+
+# Database path - can be overridden for testing via environment variable
+_DB_PATH = os.getenv("HEALTH_APP_DB_PATH", "health_app.db")
+
+
+def get_db_path():
+    """
+    Get the current database path.
+    
+    Returns:
+        str: The path to the database file.
+    """
+    return _DB_PATH
+
+
+def set_db_path(path: str):
+    """
+    Set the database path (primarily for testing).
+    
+    Args:
+        path (str): The path to the database file.
+    """
+    global _DB_PATH
+    _DB_PATH = path
 
 
 @contextmanager
@@ -32,7 +57,7 @@ def use_db(mode: str):
     if mode not in {"read", "write"}:
         raise ValueError(f"Invalid mode: {mode}")
 
-    conn = sqlite3.connect("health_app.db")
+    conn = sqlite3.connect(_DB_PATH)
     try:
         cursor = conn.cursor()
         try:
@@ -321,7 +346,7 @@ def delete_weight_entry(id: int):
         cursor.execute("DELETE FROM goals WHERE id = ?", (id,))
 
 
-def get_all_weight_entries():
+def get_all_currnet_weight_entries():
     """
     Get all weight entries from the database.
     
@@ -666,7 +691,7 @@ def update_meal_plan_for_day(day: str, meal_plan: str):
         meal_plan (str): The meal plan for the given day.
     """
     with use_db("write") as cursor:
-        cursor.execute("UPDATE meal_plan SET ? = ? WHERE id = 1", (day, meal_plan))
+        cursor.execute(f"UPDATE meal_plan SET {day} = ?", (meal_plan,))
 
 
 def get_meal_plan_for_day(day: str):
@@ -680,7 +705,8 @@ def get_meal_plan_for_day(day: str):
         str: The meal plan for the given day, or None if not found.
     """
     with use_db("read") as cursor:
-        cursor.execute("SELECT ? FROM meal_plan WHERE id = 1", (day,))
+        # Note: day is validated against valid_days in day_widget.py, so safe from SQL injection
+        cursor.execute(f"SELECT {day} FROM meal_plan")
         row = cursor.fetchone()
         return row[0] if row else None
 #---------------------------------------------------------------------------------

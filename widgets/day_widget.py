@@ -19,6 +19,9 @@ class DayWidget(QWidget):
         super().__init__()
         self.day_name = day_name
         self.valid_days = valid_days
+
+        if day_name not in valid_days:
+            raise ValueError("Invalid day name: " + day_name)
         
         # Create layout for the day widget
         day_layout = QVBoxLayout()

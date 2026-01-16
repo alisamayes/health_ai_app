@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QInputDialog, QMessageBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout
 )
 from datetime import datetime
-from database import use_db, add_weight, add_weight_loss_timeframe, add_daily_calorie_goal, get_current_weight, get_target_weight, get_weight_loss_timeframe, get_daily_calorie_goal, get_all_weight_entries, update_weight_entry, delete_weight_entry
+from database import use_db, add_weight, add_weight_loss_timeframe, add_daily_calorie_goal, get_current_weight, get_target_weight, get_weight_loss_timeframe, get_daily_calorie_goal, get_all_currnet_weight_entries, update_weight_entry, delete_weight_entry
 from config import background_dark_gray, white, border_gray, active_dark_green
 from utils import run_ai_request
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -273,7 +273,7 @@ class Goals(QWidget):
         Args:
             target_weight (float or None): The target weight to use as y-axis minimum, or None for default (50.0).
         """
-        rows = get_all_weight_entries()
+        rows = get_all_currnet_weight_entries()
 
         ids = []
         dates = []

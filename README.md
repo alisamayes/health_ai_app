@@ -173,6 +173,41 @@ Install all dependencies:
 pip install -r requirements.txt
 ```
 
+## 🧪 Testing
+
+The project uses **pytest** for testing with PyQt6 support via **pytest-qt**.
+
+### Running Tests
+
+```bash
+# Install testing dependencies
+pip install -r requirements.txt
+
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=. --cov-report=html
+
+# Run only unit tests (fast)
+pytest -m unit
+
+# Run only GUI tests
+pytest -m gui
+
+# Run specific test file
+pytest tests/test_database.py
+```
+
+### Test Structure
+
+- `tests/test_database.py` - Database operation tests
+- `tests/test_widgets.py` - PyQt6 widget tests
+- `tests/test_utils.py` - Utility function tests
+- `tests/conftest.py` - Shared fixtures and configuration
+
+See `tests/README.md` for more detailed testing documentation.
+
 ## Development Status
 
 ### ✅ Completed Features

@@ -6,7 +6,6 @@ from database import (
     add_food, get_food_entries, update_food_entry, delete_food_entry, get_all_distinct_foods,
     get_most_common_foods, get_earliest_food_date, get_food_calorie_totals_for_timeframe,
     add_exercise, get_exercise_entries, delete_exercise_entry,
-    get_exercise_calorie_totals_for_timeframe,
     add_weight, get_current_weight, get_target_weight, get_all_currnet_weight_entries,
     add_weight_loss_timeframe, get_weight_loss_timeframe,
     add_daily_calorie_goal, get_daily_calorie_goal,

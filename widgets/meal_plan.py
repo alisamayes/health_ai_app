@@ -5,6 +5,7 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from database import create_meal_plan_row
 from widgets.day_widget import DayWidget
+from utils import DaysOfTheWeek
 
 class MealPlan(QWidget):
     """
@@ -27,8 +28,9 @@ class MealPlan(QWidget):
         self.layout = QVBoxLayout()
         
         # One widget for each day of the week
-        self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
+        self.days = list(DaysOfTheWeek) 
+        # Convert the enum values to strings for the day widgets
+        self.days = [day.name for day in self.days]
         # Create main horizontal layout for all days
         self.days_layout = QHBoxLayout()
         self.days_layout.setSpacing(2)  # Minimal spacing between columns
@@ -37,7 +39,7 @@ class MealPlan(QWidget):
         # Create a widget for each day
         self.day_widgets = []
         for day in self.days:
-            day_widget = DayWidget(day, self.days)
+            day_widget = DayWidget(day)
             self.day_widgets.append(day_widget)
             # Add stretch to make each day widget expand equally
             self.days_layout.addWidget(day_widget, 1)  # Stretch factor of 1 for equal distribution

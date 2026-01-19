@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from widgets.food_tracker import FoodTracker
 from widgets.exercise_tracker import ExerciseTracker
 from widgets.goals import Goals
+from database import add_food
 
 
 @pytest.mark.gui
@@ -29,6 +30,18 @@ class TestFoodTracker:
         
         assert widget.add_button.isEnabled()
         assert widget.add_button.text() == "Add Entry"
+    
+    def test_suggest_calories_locally(self, qtbot):
+        """Test suggesting calories locally. Add an apple to the database and suggest calories for it."""
+        add_food("Apple", 95, "2024-01-01")
+        add_food("Banana", 105, "2024-01-01")
+        add_food("Banana", 95, "2024-01-01")
+        widget = FoodTracker()
+        qtbot.addWidget(widget)
+        calories = widget.suggest_calories_locally("Apple")
+        assert calories == 95
+        calories = widget.suggest_calories_locally("Banana")
+        assert calories == 100
 
 
 @pytest.mark.gui

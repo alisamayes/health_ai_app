@@ -3,7 +3,7 @@ DayWidget widget for the Health App.
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QTextEdit, QMessageBox
-from utils import run_ai_request, planner_options_dialog
+from utils import run_ai_request, planner_options_dialog, DaysOfTheWeek
 from database import get_pantry_items, get_meal_plan_for_day, update_meal_plan_for_day
 
 class DayWidget(QWidget):
@@ -12,16 +12,12 @@ class DayWidget(QWidget):
     It contains a header label(button) for the day name and a QTextEdit for the meal list.
     The meal list is automatically saved to the database when changed.
     """
-    def __init__(self, day_name, valid_days):
+    def __init__(self, day_name: DaysOfTheWeek):
         """
         Initialize the DayWidget with the day name and valid days.
         """
         super().__init__()
         self.day_name = day_name
-        self.valid_days = valid_days
-
-        if day_name not in valid_days:
-            raise ValueError("Invalid day name: " + day_name)
         
         # Create layout for the day widget
         day_layout = QVBoxLayout()
@@ -56,9 +52,6 @@ class DayWidget(QWidget):
         Returns:
             str or None: The meal plan text for this day, or None if not found.
         """
-        # Guard against unexpected column name injection by validating against known days
-        if self.day_name not in self.valid_days:
-            return None
         return get_meal_plan_for_day(self.day_name)
     
     def on_text_changed(self):

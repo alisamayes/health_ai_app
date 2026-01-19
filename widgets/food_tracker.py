@@ -452,9 +452,11 @@ class FoodTracker(QWidget):
         if not matches:
             return self.suggest_calories_from_usda(user_input)
 
-        average_calories = sum(food[1] for food in foods if food[0] == matches[0]) / len(foods for food in foods if food[0] == matches[0])
+        # get_closest_matches returns a list of the names only so we need to get the calories back to get the average
+        # TODO: Is this a good way? Mean of similar foods sounds reasonable but would something like Chickhen Sandwhich and Chicken Salad both get caught by the fuzzy match? They have different calorie values.
+        calories = [food[1] for food in foods if food[0] == matches[0]]
+        average_calories = sum(calories) / len(calories)
         return int(round(average_calories))
-        
 
     def suggest_calories_from_usda(self, user_input):
         """

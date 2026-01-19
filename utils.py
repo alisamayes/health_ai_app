@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject, pyqtSignal as Signal
 from PyQt6.QtWidgets import QDialog
 from openai import OpenAI
 from dotenv import load_dotenv
+from enum import Enum
 
 # Load environment variables
 load_dotenv()
@@ -153,3 +154,18 @@ def planner_options_dialog(*, title: str, label_text: str, chips: list):
         return wrapper
 
     return decorator
+
+class DaysOfTheWeek(Enum):
+    """
+    A simple enum to represent a day of the week with the corresponding database column name.
+    """
+    MONDAY = "Monday"
+    TUESDAY = "Tuesday"
+    WEDNESDAY = "Wednesday"
+    THURSDAY = "Thursday"
+    FRIDAY = "Friday"
+    SATURDAY = "Saturday"
+    SUNDAY = "Sunday"
+
+    def __str__(self):
+        return self.value

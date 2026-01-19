@@ -2,6 +2,7 @@
 Graphs widget for the Health App.
 """
 from PyQt6.QtCore import QDate
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox
 from datetime import datetime, timedelta
 from database import use_db, get_earliest_food_date, get_daily_calorie_goal, get_food_calorie_totals_for_timeframe, get_exercise_calorie_totals_for_timeframe
@@ -42,6 +43,12 @@ class Graphs(QWidget):
         self.next_button.setFixedSize(30, 25)
         self.next_button.setObjectName("navigationBtn")
         self.next_button.clicked.connect(self.next)
+
+        # Keyboard shortcuts for navigation: < and , for previous timeframe, > and . for next timeframe
+        QShortcut(QKeySequence("Shift+,"), self).activated.connect(self.back)  # < key
+        QShortcut(QKeySequence(","), self).activated.connect(self.back)
+        QShortcut(QKeySequence("Shift+."), self).activated.connect(self.next)  # > key
+        QShortcut(QKeySequence("."), self).activated.connect(self.next)
         
         # Layout box for the timeframe naivgation
         timeframe_layout = QHBoxLayout()

@@ -2,6 +2,7 @@
 ExerciseTracker widget for the Health App.
 """
 from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QDateEdit,
@@ -33,6 +34,12 @@ class ExerciseTracker(QWidget):
         self.next_day_button.setFixedSize(30, 25)
         self.next_day_button.setObjectName("navigationBtn")
         self.next_day_button.clicked.connect(self.next_day)
+
+        # Keyboard shortcuts for navigation: < and , for previous day, > and . for next day
+        QShortcut(QKeySequence("Shift+,"), self).activated.connect(self.back_day)  # < key
+        QShortcut(QKeySequence(","), self).activated.connect(self.back_day)
+        QShortcut(QKeySequence("Shift+."), self).activated.connect(self.next_day)  # > key
+        QShortcut(QKeySequence("."), self).activated.connect(self.next_day)
 
         date_layout = QHBoxLayout()
         date_layout.addWidget(QLabel("Select Date:"))

@@ -107,12 +107,12 @@ class DayWidget(QWidget):
         additional_criteria = [key for key, value in options.items() if value]
 
         # Pantry handling is special – we both use it as a flag and also
-        # pull pantry contents into the prompt.
+        # the items are in items[1] of the pantry_items list.
         if options.get("use_pantry"):
             pantry_items = get_pantry_items()
             AI_promt += (
                 "I have the following items in my pantry: "
-                + ", ".join([item for item, weight in pantry_items])
+                + ", ".join([item[1] for item in pantry_items])
                 + ". "
             )
             # Remove from criteria list so it isn't also used as an adjective.

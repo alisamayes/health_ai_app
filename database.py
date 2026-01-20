@@ -5,6 +5,7 @@ Contains context manager for database access and initialization functions.
 import sqlite3
 import os
 from contextlib import contextmanager
+from PyQt6.QtCore import QDate, QTime, QDateTime
 
 # Database path - can be overridden for testing via environment variable
 _DB_PATH = os.getenv("HEALTH_APP_DB_PATH", "health_app.db")
@@ -100,6 +101,15 @@ def init_db():
                 activity TEXT NOT NULL,
                 calories INTEGER NOT NULL,
                 entry_date TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sleep_diary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sleep_date DATE NOT NULL,
+                bedtime DATETIME NOT NULL,
+                wakeup DATETIME NOT NULL,
+                sleep_duration TIME NOT NULL
             )
         """)
         cursor.execute("""
@@ -512,6 +522,72 @@ def get_exercise_calorie_totals_for_timeframe(start_date: str, end_date: str):
             (start_date, end_date)
         )
         return cursor.fetchall()
+
+
+#---------------------------------------------------------------------------------
+
+# sleep diary database operations
+#---------------------------------------------------------------------------------
+
+def add_sleep_diary_entry(sleep_date: QDate, bedtime: QDateTime, wakeup: QDateTime, sleep_duration: QTime):
+    """
+    Add a sleep diary entry to the database.
+    
+    Args:
+        sleep_date (QDate): The sleep date.
+        bedtime (QDateTime): The bedtime.
+        wakeup (QDateTime): The wakeup time.
+        sleep_duration (QTime): The sleep duration.
+    """
+
+    # Convert QDates and QTimes to DATE and TIME strings.
+    # Use ISO format for dates so string comparisons and ORDER BY work correctly.
+    sleep_date_str = sleep_date.toString("yyyy-MM-dd")
+    bedtime_str = bedtime.toString("HH:mm")
+    wakeup_str = wakeup.toString("HH:mm")
+    sleep_duration_str = sleep_duration.toString("HH:mm")
+
+    with use_db("write") as cursor:
+        cursor.execute("INSERT INTO sleep_diary (sleep_date, bedtime, wakeup, sleep_duration) VALUES (?, ?, ?, ?)", (sleep_date_str, bedtime_str, wakeup_str, sleep_duration_str))
+
+
+def get_sleep_diary_entries(start_qdate: QDate, end_qdate: QDate):
+    """
+    Get the sleep diary entries for a given timeframe.
+    
+    Args:
+        start_qdate (QDate): The start date.
+        end_qdate (QDate): The end date.
+    """
+
+    with use_db("read") as cursor:
+        cursor.execute(
+            """
+            SELECT sleep_date, bedtime, wakeup, sleep_duration
+            FROM sleep_diary
+            WHERE sleep_date BETWEEN ? AND ?
+            ORDER BY sleep_date ASC
+            """,
+            (start_qdate.toString("yyyy-MM-dd"), end_qdate.toString("yyyy-MM-dd")),
+        )
+        rows = cursor.fetchall()
+    return rows
+
+
+def get_earliest_sleep_diary_date():
+    """
+    Get the earliest sleep diary date from the database.
+    
+    Returns:
+        QDate or None: The earliest sleep diary date, or None if not set.
+    """
+    with use_db("read") as cursor:
+        cursor.execute("SELECT MIN(sleep_date) FROM sleep_diary")
+        result = cursor.fetchone()
+        if result and result[0]:
+            # Stored in ISO format "yyyy-MM-dd"
+            return QDate.fromString(result[0], "yyyy-MM-dd")
+        return None
 
 #---------------------------------------------------------------------------------
 

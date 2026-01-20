@@ -3,16 +3,14 @@ Main window for the Health App.
 Contains the HealthApp class that creates and manages the main application window.
 """
 import os
-import sys
 from datetime import datetime, timedelta
-from unittest import result
 from winotify import Notification, audio
 from PyQt6.QtCore import QTimer, QSettings
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QSystemTrayIcon
 from widgets import (
     HomePage, FoodTracker, ExerciseTracker, Graphs, Goals,
-    MealPlan, Pantry, ChatBot, Settings
+    MealPlan, Pantry, SleepDiary, ChatBot, Settings
 )
 from database import check_weekly_weight_entry
 from config import (
@@ -42,7 +40,7 @@ class HealthApp(QMainWindow):
             QSettings.Format.NativeFormat
         )
         self.setWindowTitle("Health Tracker App")
-        self.setGeometry(300, 300, 800, 400)
+        self.setGeometry(300, 300, 1000, 600)
         # Prefer an .ico for Windows taskbar; fallback to PNG if .ico not present
         icon_path_ico = os.path.join("assets", "legnedary_astrid_boop_upscale.ico")
         icon_path_png = os.path.join("assets", "legnedary_astrid_boop_upscale.png")
@@ -106,7 +104,7 @@ class HealthApp(QMainWindow):
                 border-color: {active_dark_green};
             }}
             QDateEdit {{
-                background-color: {background_dark_gray};
+                background-color: {border_gray};
                 color: {white};
                 border: 2px solid {border_gray};
                 padding: 8px;
@@ -303,6 +301,16 @@ class HealthApp(QMainWindow):
                 padding: 2px;
                 border-radius: 4px;
             }}
+            QTimeEdit {{
+                background-color: {border_gray};
+                color: {white};
+                border: 2px solid {border_gray};
+                padding: 8px;
+                border-radius: 6px;
+            }}
+            QTimeEdit:focus {{
+                border-color: {active_dark_green};
+            }}
         """)
 
         self.tabs = QTabWidget()
@@ -312,6 +320,7 @@ class HealthApp(QMainWindow):
         self.home_page = HomePage()
         self.food_tracker = FoodTracker()
         self.exercise_tracker = ExerciseTracker()
+        self.sleep_diary = SleepDiary()
         self.graphs = Graphs()
         self.goals = Goals()
         self.meal_plan = MealPlan()
@@ -321,6 +330,7 @@ class HealthApp(QMainWindow):
         self.tabs.addTab(self.home_page, "Home")
         self.tabs.addTab(self.food_tracker, "Food Tracker")
         self.tabs.addTab(self.exercise_tracker, "Exercise Tracker")
+        self.tabs.addTab(self.sleep_diary, "Sleep Diary")
         self.tabs.addTab(self.graphs, "Graphs")
         self.tabs.addTab(self.goals, "Goals")
         self.tabs.addTab(self.meal_plan, "Meal Plans")

@@ -11,6 +11,7 @@ from .meal_plan import MealPlan, DayWidget
 from .pantry import Pantry
 from .chat_bot import ChatBot
 from .settings import Settings
+from .sleep_diary import SleepDiary
 
 __all__ = [
     'HomePage',
@@ -23,4 +24,5 @@ __all__ = [
     'Pantry',
     'ChatBot',
     'Settings',
+    'SleepDiary',
 ]

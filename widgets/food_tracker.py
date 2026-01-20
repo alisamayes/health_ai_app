@@ -29,6 +29,8 @@ class FoodTracker(QWidget):
         self.layout = QVBoxLayout()
 
         # Date selector section for picking which date to show calorie and food entries for
+        self.date_label = QLabel("Select Date:")
+        self.date_label.setFixedSize(75, 25) # Set the size policy to fixed so the label doesnt stretch the layout.
         self.date_selector = QDateEdit(calendarPopup=True)
         self.date_selector.setDate(QDate.currentDate())
         self.date_selector.setDisplayFormat("dd-MM-yyyy")
@@ -49,7 +51,7 @@ class FoodTracker(QWidget):
         QShortcut(QKeySequence("."), self).activated.connect(self.next_day)
 
         date_layout = QHBoxLayout()
-        date_layout.addWidget(QLabel("Select Date:"))
+        date_layout.addWidget(self.date_label)
         date_layout.addWidget(self.back_day_button)
         date_layout.addWidget(self.date_selector)
         date_layout.addWidget(self.next_day_button)

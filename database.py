@@ -563,7 +563,7 @@ def get_sleep_diary_entries(start_qdate: QDate, end_qdate: QDate):
     with use_db("read") as cursor:
         cursor.execute(
             """
-            SELECT sleep_date, bedtime, wakeup, sleep_duration
+            SELECT id, sleep_date, bedtime, wakeup, sleep_duration
             FROM sleep_diary
             WHERE sleep_date BETWEEN ? AND ?
             ORDER BY sleep_date ASC
@@ -572,6 +572,16 @@ def get_sleep_diary_entries(start_qdate: QDate, end_qdate: QDate):
         )
         rows = cursor.fetchall()
     return rows
+
+def delete_sleep_diary_entry(id: int):
+    """
+    Delete a sleep diary entry from the database.
+    
+    Args:
+        id (int): The id of the sleep diary entry to delete.
+    """
+    with use_db("write") as cursor:
+        cursor.execute("DELETE FROM sleep_diary WHERE id = ?", (id,))
 
 
 def get_earliest_sleep_diary_date():
@@ -588,6 +598,25 @@ def get_earliest_sleep_diary_date():
             # Stored in ISO format "yyyy-MM-dd"
             return QDate.fromString(result[0], "yyyy-MM-dd")
         return None
+
+
+def update_sleep_diary_entry(id: int, sleep_date: QDate, bedtime: QDateTime, wakeup: QDateTime, sleep_duration: QTime):
+    """
+    Update a sleep diary entry in the database.
+    
+    Args:
+        id (int): The id of the sleep diary entry to update.
+        sleep_date (QDate): The sleep date.
+        bedtime (QDateTime): The bedtime.
+        wakeup (QDateTime): The wakeup time.
+        sleep_duration (QTime): The sleep duration.
+    """
+    sleep_date_str = sleep_date.toString("yyyy-MM-dd")
+    bedtime_str = bedtime.toString("HH:mm")
+    wakeup_str = wakeup.toString("HH:mm")
+    sleep_duration_str = sleep_duration.toString("HH:mm")
+    with use_db("write") as cursor:
+        cursor.execute("UPDATE sleep_diary SET sleep_date = ?, bedtime = ?, wakeup = ?, sleep_duration = ? WHERE id = ?", (sleep_date_str, bedtime_str, wakeup_str, sleep_duration_str, id))
 
 #---------------------------------------------------------------------------------
 

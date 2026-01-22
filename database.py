@@ -618,6 +618,56 @@ def update_sleep_diary_entry(id: int, sleep_date: QDate, bedtime: QDateTime, wak
     with use_db("write") as cursor:
         cursor.execute("UPDATE sleep_diary SET sleep_date = ?, bedtime = ?, wakeup = ?, sleep_duration = ? WHERE id = ?", (sleep_date_str, bedtime_str, wakeup_str, sleep_duration_str, id))
 
+
+def get_sleep_duration_totals_for_timeframe(start_date: str, end_date: str):
+    """
+    Get the average sleep duration in hours for each date in a given timeframe.
+    Sleep duration is stored as "HH:mm" format and converted to hours (float).
+    If multiple entries exist for the same date, returns the average duration.
+    
+    Args:
+        start_date (str): The start date in "yyyy-MM-dd" format.
+        end_date (str): The end date in "yyyy-MM-dd" format.
+
+    Returns:
+        list: A list of tuples (date_str, duration_hours) where duration_hours is a float.
+    """
+    from PyQt6.QtCore import QTime
+    with use_db("read") as cursor:
+        cursor.execute(
+            """
+            SELECT sleep_date, sleep_duration
+            FROM sleep_diary
+            WHERE sleep_date BETWEEN ? AND ?
+            ORDER BY sleep_date ASC
+            """,
+            (start_date, end_date)
+        )
+        rows = cursor.fetchall()
+    
+    # Group by date and calculate average duration in hours
+    date_to_durations = {}
+    for row in rows:
+        date_str = row[0]
+        duration_str = row[1]  # Format: "HH:mm"
+        
+        # Parse HH:mm to hours
+        qtime = QTime.fromString(duration_str, "HH:mm")
+        if qtime.isValid():
+            hours = qtime.hour() + (qtime.minute() / 60.0)
+            if date_str not in date_to_durations:
+                date_to_durations[date_str] = []
+            date_to_durations[date_str].append(hours)
+    
+    # Calculate average for each date
+    result = []
+    for date_str in sorted(date_to_durations.keys()):
+        durations = date_to_durations[date_str]
+        avg_hours = sum(durations) / len(durations)
+        result.append((date_str, avg_hours))
+    
+    return result
+
 #---------------------------------------------------------------------------------
 
 # pantry tracker database operations

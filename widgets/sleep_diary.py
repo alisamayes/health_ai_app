@@ -6,9 +6,10 @@ from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QDateEdit, QTimeEdit, QTableWidgetItem, QDateTimeEdit,
     QMessageBox, QInputDialog,
 )
-from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtGui import QShortcut, QKeySequence, QBrush, QColor
 from PyQt6.QtCore import Qt, QDate, QTime, QDateTime
 from database import get_sleep_diary_entries, get_earliest_sleep_diary_date, add_sleep_diary_entry, delete_sleep_diary_entry, update_sleep_diary_entry
+from config import calories_burned_red, hover_light_green
 
 
 class SleepDiary(QWidget):
@@ -109,6 +110,14 @@ class SleepDiary(QWidget):
         self.sleep_diary_splitter.addWidget(self.stats_container)
         self.layout.addWidget(self.sleep_diary_splitter)
         self.setLayout(self.layout)
+        
+        # Recommended sleep for 18-64 year olds is 7-9 hours. As this age range is so broad I dont think need to use AI or anything to narrow it down
+        self.reccomended_hours_min_sleep = 7
+        self.reccomended_hours_max_sleep = 9
+        # Convert to seconds for precise comparison
+        self.reccomended_seconds_min_sleep = self.reccomended_hours_min_sleep * 3600  # 7 hours = 25200 seconds
+        self.reccomended_seconds_max_sleep = self.reccomended_hours_max_sleep * 3600  # 9 hours = 32400 seconds
+        
         self.load_table()
 
     def back(self):
@@ -398,7 +407,20 @@ class SleepDiary(QWidget):
            self.table.setItem(i, 0, QTableWidgetItem(display_date))
            self.table.setItem(i, 1, QTableWidgetItem(row[2]))  # bedtime
            self.table.setItem(i, 2, QTableWidgetItem(row[3]))  # wakeup
-           self.table.setItem(i, 3, QTableWidgetItem(row[4]))  # duration
+           
+           # Sleep duration with color coding using QLabel widget for reliable styling
+           duration_qtime = QTime.fromString(row[4], "HH:mm")
+           duration_label = QLabel(row[4])
+           duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+           if duration_qtime.isValid():
+               # Convert to total seconds for precise comparison
+               duration_seconds = duration_qtime.hour() * 3600 + duration_qtime.minute() * 60
+               # Apply color based on recommended range (7-9 hours = 25200-32400 seconds)
+               if duration_seconds < self.reccomended_seconds_min_sleep or duration_seconds > self.reccomended_seconds_max_sleep:
+                   duration_label.setStyleSheet(f"color: {calories_burned_red};")
+               else:
+                   duration_label.setStyleSheet(f"color: {hover_light_green};")
+           self.table.setCellWidget(i, 3, duration_label)
         self.load_stats()
 
     def load_stats(self):
@@ -463,6 +485,11 @@ class SleepDiary(QWidget):
             hours = avg_duration.hour()
             minutes = avg_duration.minute()
             self.average_sleep_duration_label.setText(f"Average Sleep Duration: {hours}h {minutes}m")
+            # Compare using seconds for precise comparison (7-9 hours = 25200-32400 seconds)
+            if avg_duration_secs < self.reccomended_seconds_min_sleep or avg_duration_secs > self.reccomended_seconds_max_sleep:
+                self.average_sleep_duration_label.setStyleSheet(f"color: {calories_burned_red};")
+            else:
+                self.average_sleep_duration_label.setStyleSheet(f"color: {hover_light_green};")
         else:
             self.average_sleep_duration_label.setText("Average Sleep Duration: --:--")
 

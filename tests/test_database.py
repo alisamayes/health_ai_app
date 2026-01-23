@@ -11,8 +11,11 @@ from database import (
     add_daily_calorie_goal, get_daily_calorie_goal,
     add_pantry_item, get_pantry_items, clear_pantry, delete_pantry_items,
     add_shopping_list_item, get_shopping_list_items, clear_shopping_list, delete_shopping_list_items,
-    create_meal_plan_row, get_meal_plan_for_day, update_meal_plan_for_day
+    create_meal_plan_row, get_meal_plan_for_day, update_meal_plan_for_day,
+    add_sleep_diary_entry, get_sleep_diary_entries, delete_sleep_diary_entry,
+    update_sleep_diary_entry, get_earliest_sleep_diary_date, get_sleep_duration_totals_for_timeframe
 )
+from PyQt6.QtCore import QDate, QTime, QDateTime
 
 
 @pytest.mark.unit
@@ -402,3 +405,264 @@ class TestTimeframeOperations:
         assert len(totals) >= 3
         total_calories = sum(cal for date, cal in totals)
         assert total_calories == 450  # 100 + 200 + 150
+
+
+@pytest.mark.unit
+class TestSleepDiaryOperations:
+    """Tests for sleep diary database operations."""
+    
+    def test_add_sleep_diary_entry(self):
+        """Test adding a sleep diary entry."""
+        sleep_date = QDate(2024, 1, 15)
+        bedtime = QDateTime(QDate(2024, 1, 15), QTime(22, 30))
+        wakeup = QDateTime(QDate(2024, 1, 16), QTime(7, 0))
+        sleep_duration = QTime(8, 30)  # 8 hours 30 minutes
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        start_date = QDate(2024, 1, 15)
+        end_date = QDate(2024, 1, 16)
+        entries = get_sleep_diary_entries(start_date, end_date)
+        
+        assert len(entries) > 0
+        assert entries[0][1] == "2024-01-15"  # sleep_date
+        assert entries[0][2] == "22:30"  # bedtime
+        assert entries[0][3] == "07:00"  # wakeup
+        assert entries[0][4] == "08:30"  # sleep_duration
+    
+    def test_get_sleep_diary_entries(self):
+        """Test retrieving sleep diary entries for a date range."""
+        sleep_date1 = QDate(2024, 1, 10)
+        bedtime1 = QDateTime(QDate(2024, 1, 10), QTime(23, 0))
+        wakeup1 = QDateTime(QDate(2024, 1, 11), QTime(8, 0))
+        sleep_duration1 = QTime(9, 0)
+        
+        sleep_date2 = QDate(2024, 1, 11)
+        bedtime2 = QDateTime(QDate(2024, 1, 11), QTime(22, 0))
+        wakeup2 = QDateTime(QDate(2024, 1, 12), QTime(6, 30))
+        sleep_duration2 = QTime(8, 30)
+        
+        add_sleep_diary_entry(sleep_date1, bedtime1, wakeup1, sleep_duration1)
+        add_sleep_diary_entry(sleep_date2, bedtime2, wakeup2, sleep_duration2)
+        
+        start_date = QDate(2024, 1, 10)
+        end_date = QDate(2024, 1, 12)
+        entries = get_sleep_diary_entries(start_date, end_date)
+        
+        assert len(entries) >= 2
+        dates = [entry[1] for entry in entries]
+        assert "2024-01-10" in dates
+        assert "2024-01-11" in dates
+    
+    def test_delete_sleep_diary_entry(self):
+        """Test deleting a sleep diary entry."""
+        sleep_date = QDate(2024, 1, 20)
+        bedtime = QDateTime(QDate(2024, 1, 20), QTime(22, 0))
+        wakeup = QDateTime(QDate(2024, 1, 21), QTime(7, 0))
+        sleep_duration = QTime(9, 0)
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        start_date = QDate(2024, 1, 20)
+        end_date = QDate(2024, 1, 21)
+        entries = get_sleep_diary_entries(start_date, end_date)
+        entry_id = entries[0][0]
+        
+        delete_sleep_diary_entry(entry_id)
+        
+        remaining_entries = get_sleep_diary_entries(start_date, end_date)
+        assert not any(e[0] == entry_id for e in remaining_entries)
+    
+    def test_update_sleep_diary_entry(self):
+        """Test updating a sleep diary entry."""
+        sleep_date = QDate(2024, 1, 25)
+        bedtime = QDateTime(QDate(2024, 1, 25), QTime(23, 0))
+        wakeup = QDateTime(QDate(2024, 1, 26), QTime(8, 0))
+        sleep_duration = QTime(9, 0)
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        start_date = QDate(2024, 1, 25)
+        end_date = QDate(2024, 1, 26)
+        entries = get_sleep_diary_entries(start_date, end_date)
+        entry_id = entries[0][0]
+        
+        # Update to new times
+        new_bedtime = QDateTime(QDate(2024, 1, 25), QTime(22, 30))
+        new_wakeup = QDateTime(QDate(2024, 1, 26), QTime(7, 30))
+        new_duration = QTime(9, 0)
+        
+        update_sleep_diary_entry(entry_id, sleep_date, new_bedtime, new_wakeup, new_duration)
+        
+        updated_entries = get_sleep_diary_entries(start_date, end_date)
+        updated_entry = next(e for e in updated_entries if e[0] == entry_id)
+        assert updated_entry[2] == "22:30"  # bedtime
+        assert updated_entry[3] == "07:30"  # wakeup
+    
+    def test_get_earliest_sleep_diary_date(self):
+        """Test getting the earliest sleep diary date."""
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        yesterday = today - timedelta(days=1)
+        
+        sleep_date_old = QDate.fromString(yesterday.strftime("%Y-%m-%d"), "yyyy-MM-dd")
+        sleep_date_new = QDate.fromString(today.strftime("%Y-%m-%d"), "yyyy-MM-dd")
+        
+        bedtime_old = QDateTime(sleep_date_old, QTime(22, 0))
+        wakeup_old = QDateTime(sleep_date_old.addDays(1), QTime(7, 0))
+        sleep_duration_old = QTime(9, 0)
+        
+        bedtime_new = QDateTime(sleep_date_new, QTime(23, 0))
+        wakeup_new = QDateTime(sleep_date_new.addDays(1), QTime(8, 0))
+        sleep_duration_new = QTime(9, 0)
+        
+        add_sleep_diary_entry(sleep_date_old, bedtime_old, wakeup_old, sleep_duration_old)
+        add_sleep_diary_entry(sleep_date_new, bedtime_new, wakeup_new, sleep_duration_new)
+        
+        earliest = get_earliest_sleep_diary_date()
+        assert earliest is not None
+        assert earliest.toString("yyyy-MM-dd") == yesterday.strftime("%Y-%m-%d")
+    
+    def test_get_earliest_sleep_diary_date_empty(self):
+        """Test getting earliest date when no entries exist."""
+        earliest = get_earliest_sleep_diary_date()
+        assert earliest is None
+    
+    def test_get_sleep_duration_totals_for_timeframe(self):
+        """Test getting sleep duration totals for a timeframe."""
+        from datetime import datetime, timedelta
+        start = datetime.now() - timedelta(days=5)
+        end = datetime.now() - timedelta(days=1)
+        
+        # Add entries for different dates
+        sleep_date1 = QDate.fromString(start.strftime("%Y-%m-%d"), "yyyy-MM-dd")
+        bedtime1 = QDateTime(sleep_date1, QTime(22, 0))
+        wakeup1 = QDateTime(sleep_date1.addDays(1), QTime(7, 0))
+        sleep_duration1 = QTime(9, 0)  # 9 hours
+        
+        sleep_date2 = QDate.fromString(end.strftime("%Y-%m-%d"), "yyyy-MM-dd")
+        bedtime2 = QDateTime(sleep_date2, QTime(23, 0))
+        wakeup2 = QDateTime(sleep_date2.addDays(1), QTime(8, 0))
+        sleep_duration2 = QTime(9, 0)  # 9 hours
+        
+        add_sleep_diary_entry(sleep_date1, bedtime1, wakeup1, sleep_duration1)
+        add_sleep_diary_entry(sleep_date2, bedtime2, wakeup2, sleep_duration2)
+        
+        totals = get_sleep_duration_totals_for_timeframe(
+            start.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d")
+        )
+        
+        # Should have entries for the dates in range
+        assert len(totals) >= 2
+        # Check that durations are in hours (float)
+        for date_str, duration_hours in totals:
+            assert isinstance(duration_hours, float)
+            assert duration_hours > 0
+
+
+@pytest.mark.unit
+class TestSleepDiaryOperationsEdgeCases:
+    """Edge case tests for sleep diary operations."""
+    
+    def test_get_sleep_diary_entries_empty_range(self):
+        """Test getting entries for a date range with no entries."""
+        start_date = QDate(2024, 12, 31)
+        end_date = QDate(2024, 12, 31)
+        entries = get_sleep_diary_entries(start_date, end_date)
+        assert entries == []
+    
+    def test_get_sleep_diary_entries_date_specific(self):
+        """Test that entries are date-specific."""
+        sleep_date1 = QDate(2024, 2, 1)
+        bedtime1 = QDateTime(sleep_date1, QTime(22, 0))
+        wakeup1 = QDateTime(sleep_date1.addDays(1), QTime(7, 0))
+        sleep_duration1 = QTime(9, 0)
+        
+        sleep_date2 = QDate(2024, 2, 2)
+        bedtime2 = QDateTime(sleep_date2, QTime(23, 0))
+        wakeup2 = QDateTime(sleep_date2.addDays(1), QTime(8, 0))
+        sleep_duration2 = QTime(9, 0)
+        
+        add_sleep_diary_entry(sleep_date1, bedtime1, wakeup1, sleep_duration1)
+        add_sleep_diary_entry(sleep_date2, bedtime2, wakeup2, sleep_duration2)
+        
+        # Get entries for first date only
+        entries1 = get_sleep_diary_entries(sleep_date1, sleep_date1)
+        entries2 = get_sleep_diary_entries(sleep_date2, sleep_date2)
+        
+        assert len(entries1) >= 1
+        assert len(entries2) >= 1
+        assert entries1[0][1] == "2024-02-01"
+        assert entries2[0][1] == "2024-02-02"
+    
+    def test_sleep_diary_multiple_entries_same_date(self):
+        """Test handling multiple entries for the same date (edge case)."""
+        sleep_date = QDate(2024, 2, 10)
+        
+        # Add two entries for the same date
+        bedtime1 = QDateTime(sleep_date, QTime(22, 0))
+        wakeup1 = QDateTime(sleep_date.addDays(1), QTime(7, 0))
+        sleep_duration1 = QTime(9, 0)
+        
+        bedtime2 = QDateTime(sleep_date, QTime(23, 0))
+        wakeup2 = QDateTime(sleep_date.addDays(1), QTime(8, 0))
+        sleep_duration2 = QTime(9, 0)
+        
+        add_sleep_diary_entry(sleep_date, bedtime1, wakeup1, sleep_duration1)
+        add_sleep_diary_entry(sleep_date, bedtime2, wakeup2, sleep_duration2)
+        
+        entries = get_sleep_diary_entries(sleep_date, sleep_date)
+        assert len(entries) >= 2
+        
+        # Test that get_sleep_duration_totals_for_timeframe averages them
+        totals = get_sleep_duration_totals_for_timeframe(
+            sleep_date.toString("yyyy-MM-dd"),
+            sleep_date.toString("yyyy-MM-dd")
+        )
+        # Should have one entry with averaged duration
+        assert len(totals) == 1
+        date_str, avg_hours = totals[0]
+        assert date_str == "2024-02-10"
+        assert avg_hours == 9.0  # Both entries are 9 hours
+    
+    def test_sleep_diary_late_bedtime(self):
+        """Test handling late bedtime (after midnight)."""
+        sleep_date = QDate(2024, 2, 15)
+        # Bedtime at 1 AM (next day)
+        bedtime = QDateTime(sleep_date.addDays(1), QTime(1, 0))
+        wakeup = QDateTime(sleep_date.addDays(1), QTime(9, 0))
+        sleep_duration = QTime(8, 0)
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        entries = get_sleep_diary_entries(sleep_date, sleep_date)
+        assert len(entries) >= 1
+        # Bedtime should be stored as "01:00"
+        assert entries[0][2] == "01:00"
+    
+    def test_sleep_diary_short_duration(self):
+        """Test handling short sleep duration (less than recommended)."""
+        sleep_date = QDate(2024, 2, 20)
+        bedtime = QDateTime(sleep_date, QTime(23, 0))
+        wakeup = QDateTime(sleep_date.addDays(1), QTime(5, 0))
+        sleep_duration = QTime(6, 0)  # 6 hours (less than recommended 7-9)
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        entries = get_sleep_diary_entries(sleep_date, sleep_date)
+        assert len(entries) >= 1
+        assert entries[0][4] == "06:00"
+    
+    def test_sleep_diary_long_duration(self):
+        """Test handling long sleep duration (more than recommended)."""
+        sleep_date = QDate(2024, 2, 25)
+        bedtime = QDateTime(sleep_date, QTime(22, 0))
+        wakeup = QDateTime(sleep_date.addDays(1), QTime(11, 0))
+        sleep_duration = QTime(13, 0)  # 13 hours (more than recommended 7-9)
+        
+        add_sleep_diary_entry(sleep_date, bedtime, wakeup, sleep_duration)
+        
+        entries = get_sleep_diary_entries(sleep_date, sleep_date)
+        assert len(entries) >= 1
+        assert entries[0][4] == "13:00"

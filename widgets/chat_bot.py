@@ -61,7 +61,7 @@ class ChatBot(QWidget):
         success_handler="chat_bot_on_ai_response",
         error_handler="chat_bot_on_ai_error"
     )
-    def handle_send(self):
+    def handle_send(self, *_, **__):
         """
         Handle send button click - create async AI request.
         Displays the user message in the chat area, shows a "Thinking..." indicator,

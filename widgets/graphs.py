@@ -12,6 +12,7 @@ from config import (
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from utils import get_timeframe_dates
 
 class Graphs(QWidget):
     """
@@ -86,6 +87,29 @@ class Graphs(QWidget):
         # Initial load
         self.load_graphs()
 
+    def _get_earliest_date_for_graphs(self):
+        """
+        Get the earliest date from both food and sleep diary databases.
+        Returns QDate or None.
+        """
+        earliest_food_date = get_earliest_food_date()
+        earliest_sleep_date = get_earliest_sleep_diary_date()
+        
+        # Convert food date string to QDate if it exists
+        food_qdate = None
+        if earliest_food_date:
+            food_qdate = QDate.fromString(earliest_food_date, "yyyy-MM-dd")
+        
+        # Use the earliest of the two dates
+        if food_qdate and earliest_sleep_date:
+            return food_qdate if food_qdate < earliest_sleep_date else earliest_sleep_date
+        elif food_qdate:
+            return food_qdate
+        elif earliest_sleep_date:
+            return earliest_sleep_date
+        else:
+            return None
+
     def get_date_range(self, timeframe_label: str):
         """
         Get the date range for the graphs based on the timeframe label.
@@ -97,41 +121,13 @@ class Graphs(QWidget):
         Returns:
             tuple: (start_date_str, end_date_str) as "yyyy-MM-dd" strings, or (None, end_date_str) for "Full History".
         """
-        # Find earliest entry_date in both food and sleep databases
-        earliest_food_date = get_earliest_food_date()
-        earliest_sleep_date = get_earliest_sleep_diary_date()
+        # Use the shared utility function to calculate dates
+        start_qdate, end_qdate = get_timeframe_dates(
+            self.timeframe_selector, 
+            self._get_earliest_date_for_graphs,
+            timeframe_str=timeframe_label
+        )
         
-        # Use the earliest of the two dates
-        earliest_date = None
-        if earliest_food_date and earliest_sleep_date:
-            food_qdate = QDate.fromString(earliest_food_date, "yyyy-MM-dd")
-            sleep_qdate = earliest_sleep_date
-            earliest_qdate = food_qdate if food_qdate < sleep_qdate else sleep_qdate
-        elif earliest_food_date:
-            earliest_qdate = QDate.fromString(earliest_food_date, "yyyy-MM-dd")
-        elif earliest_sleep_date:
-            earliest_qdate = earliest_sleep_date
-        else:
-            earliest_qdate = None
-
-        end_qdate = QDate.currentDate() # End date is the current date.
-        if timeframe_label == "1 Week":
-            start_qdate = end_qdate.addDays(-6)
-        elif timeframe_label == "2 Weeks":
-            start_qdate = end_qdate.addDays(-13)
-        elif timeframe_label == "1 Month":
-            start_qdate = end_qdate.addMonths(-1).addDays(1)
-        elif timeframe_label == "3 Months":
-            start_qdate = end_qdate.addMonths(-3).addDays(1)
-        elif timeframe_label == "1 Year":
-            start_qdate = end_qdate.addYears(-1).addDays(1)
-        elif timeframe_label == "Full History": # First entry in the database to the current date.
-            start_qdate = earliest_qdate
-
-        # If earliest date and start date < earliest date, it means we dont have entries goign that far back and so just keep the range within the bounds of known data.
-        if earliest_qdate and start_qdate < earliest_qdate:
-            start_qdate = earliest_qdate
-
         return start_qdate.toString("yyyy-MM-dd") if start_qdate else None, end_qdate.toString("yyyy-MM-dd")
 
     def back(self):
@@ -208,7 +204,7 @@ class Graphs(QWidget):
             dates.append(key)
             food_totals.append(calorie_date_to_total.get(key, 0))
             exercise_totals.append(exercise_date_to_total.get(key, 0) * -1)
-            sleep_durations.append(sleep_date_to_total.get(key, None))  # None if no data
+            sleep_durations.append(sleep_date_to_total.get(key, None))
             if food_totals[index] + exercise_totals[index] < 0:
                 overburn.append(food_totals[index] + exercise_totals[index])
                 exercise_totals[index] -= overburn[index]
@@ -224,14 +220,15 @@ class Graphs(QWidget):
         self.calorie_graph.clear()
         self.sleep_graph.clear()
 
-        # Plot calorie graph (top subplot)
         if dates:
-            # Plot data as bar charts
+            # Plot the graphs. Calories on top as a bar chart, sleep duration on bottom as a line chart.
             self.calorie_graph.bar(dates, food_totals, color=active_dark_green, alpha=0.7, label='Calories Intake')
             self.calorie_graph.bar(dates, exercise_totals, color=calories_burned_red, alpha=0.7, bottom=food_totals, label='Calorie Burned')
             self.calorie_graph.bar(dates, overburn, color=overburn_orange, alpha=0.7, label='Overburn')
+            if sleep_durations:
+                self.sleep_graph.plot(dates, sleep_durations, color=hover_light_green, marker='o', linewidth=2, markersize=4, label='Sleep Duration')
 
-            # Plot horizontal line for daily calorie goal if available
+            # Plot horizontal line for daily calorie goal if available on calories graph
             if daily_calorie_goal is not None:
                 self.calorie_graph.axhline(
                     y=daily_calorie_goal,
@@ -240,59 +237,47 @@ class Graphs(QWidget):
                     linewidth=1.5,
                     label='Daily Calorie Goal'
                 )
+            # Add horizontal lines for recommended range (7-9 hours) on sleep graph
+            self.sleep_graph.axhline(y=7, color=calories_burned_red, linestyle='--', linewidth=1, alpha=0.5, label='Recommended Min (7h)')
+            self.sleep_graph.axhline(y=9, color=calories_burned_red, linestyle='--', linewidth=1, alpha=0.5, label='Recommended Max (9h)')
 
+            # Label the calorie graph
             self.calorie_graph.set_title("Daily Calories - Consumed vs Burned", color=white)
             self.calorie_graph.set_xlabel("Date", color=white)
             self.calorie_graph.set_ylabel("Calories", color=white)
             self.calorie_graph.grid(True, linestyle='--', alpha=0.3)
             self.calorie_graph.legend()
+
+            # Label the sleep graph
+            self.sleep_graph.set_title("Daily Sleep Duration", color=white)
+            self.sleep_graph.set_xlabel("Date", color=white)
+            self.sleep_graph.set_ylabel("Hours", color=white)
+            self.sleep_graph.grid(True, linestyle='--', alpha=0.3)
+            self.sleep_graph.legend()
             
             # Label x-axis only when number of points is manageable
             if len(dates) <= 32:
                 self.calorie_graph.set_xticks(range(len(dates)))
                 self.calorie_graph.set_xticklabels(display_dates, rotation=45, ha='right')
+                self.sleep_graph.set_xticks(range(len(dates)))
+                self.sleep_graph.set_xticklabels(display_dates, rotation=45, ha='right')
                 if daily_calorie_goal is not None:
                     for i in range(len(dates)):
                         if (food_totals[i] + exercise_totals[i]) > daily_calorie_goal:
                             self.calorie_graph.get_xticklabels()[i].set_color(calories_burned_red)
                         else:
                             self.calorie_graph.get_xticklabels()[i].set_color(white)
+                            
             else:
                 self.calorie_graph.set_xticks([])
+                self.sleep_graph.set_xticks([])
         else:
             self.calorie_graph.text(0.5, 0.5, "No data for selected range", ha='center', va='center', color=border_gray, transform=self.calorie_graph.transAxes)
             self.calorie_graph.set_xticks([])
             self.calorie_graph.set_yticks([])
-
-        # Plot sleep duration graph (bottom subplot)
-        if any(d is not None for d in sleep_durations):
-            # Filter out None values for plotting
-            sleep_dates = [dates[i] for i in range(len(dates)) if sleep_durations[i] is not None]
-            sleep_values = [sleep_durations[i] for i in range(len(dates)) if sleep_durations[i] is not None]
-            
-            if sleep_values:
-                self.sleep_graph.plot(sleep_dates, sleep_values, color=hover_light_green, marker='o', linewidth=2, markersize=4, label='Sleep Duration')
-                
-                # Add horizontal lines for recommended range (7-9 hours)
-                self.sleep_graph.axhline(y=7, color=calories_burned_red, linestyle='--', linewidth=1, alpha=0.5, label='Recommended Min (7h)')
-                self.sleep_graph.axhline(y=9, color=calories_burned_red, linestyle='--', linewidth=1, alpha=0.5, label='Recommended Max (9h)')
-                
-                self.sleep_graph.set_title("Daily Sleep Duration", color=white)
-                self.sleep_graph.set_xlabel("Date", color=white)
-                self.sleep_graph.set_ylabel("Hours", color=white)
-                self.sleep_graph.grid(True, linestyle='--', alpha=0.3)
-                self.sleep_graph.legend()
-                
-                # Label x-axis only when number of points is manageable
-                if len(dates) <= 32:
-                    self.sleep_graph.set_xticks(range(len(dates)))
-                    self.sleep_graph.set_xticklabels(display_dates, rotation=45, ha='right')
-                else:
-                    self.sleep_graph.set_xticks([])
-        else:
             self.sleep_graph.text(0.5, 0.5, "No sleep data for selected range", ha='center', va='center', color=border_gray, transform=self.sleep_graph.transAxes)
             self.sleep_graph.set_xticks([])
-            self.sleep_graph.set_yticks([])
+            self.sleep_graph.set_yticks([])               
 
         self.canvas.figure.tight_layout()
         self.canvas.draw()

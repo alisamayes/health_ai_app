@@ -623,7 +623,7 @@ def get_sleep_duration_totals_for_timeframe(start_date: str, end_date: str):
     """
     Get the average sleep duration in hours for each date in a given timeframe.
     Sleep duration is stored as "HH:mm" format and converted to hours (float).
-    If multiple entries exist for the same date, returns the average duration.
+    If multiple entries exist for the same date (although shouldnt happen in normal usage but not impossible), returns the average duration.
     
     Args:
         start_date (str): The start date in "yyyy-MM-dd" format.

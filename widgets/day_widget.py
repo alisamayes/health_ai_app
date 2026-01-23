@@ -134,14 +134,29 @@ class DayWidget(QWidget):
 
         return AI_promt
 
+    @planner_options_dialog(
+        title="AI Meal Planner Options",
+        label_text="Choose any options you want to include:",
+        chips=[
+            ("healthy", "Healthy"),
+            ("cheap", "Cheap"),
+            ("vegetarian", "Vegetarian"),
+            ("vegan", "Vegan"),
+            ("quick", "Quick"),
+            ("use_pantry", "Use Pantry"),
+        ],
+    )
     @run_ai_request(
         success_handler="meal_plan_on_ai_response",
         error_handler="meal_plan_on_ai_error"
     )
-    def ai_suggest_day_meal_plan(self, options: dict):
+    def ai_suggest_day_meal_plan(self, options: dict, *_, **__):
         """
         Suggest a meal plan for the day using AI with option chips.
         The chip selection dialog is injected via the @planner_options_dialog decorator.
+        
+        Args:
+            options (dict): Dictionary of selected options from PlannerOptionsDialog.
         """
         current_text = self.meal_list.toPlainText()
         AI_promt = self._build_meal_plan_prompt(current_text, options)
@@ -165,18 +180,3 @@ class DayWidget(QWidget):
             error_message (str): The error message from the AI request.
         """
         print(error_message)
-
-
-# Attach the planner options dialog decorator to the DayWidget AI method
-DayWidget.ai_suggest_day_meal_plan = planner_options_dialog(
-    title="AI Meal Planner Options",
-    label_text="Choose any options you want to include:",
-    chips=[
-        ("healthy", "Healthy"),
-        ("cheap", "Cheap"),
-        ("vegetarian", "Vegetarian"),
-        ("vegan", "Vegan"),
-        ("quick", "Quick"),
-        ("use_pantry", "Use Pantry"),
-    ],
-)(DayWidget.ai_suggest_day_meal_plan)

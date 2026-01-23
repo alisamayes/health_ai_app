@@ -10,6 +10,7 @@ from PyQt6.QtGui import QShortcut, QKeySequence, QBrush, QColor
 from PyQt6.QtCore import Qt, QDate, QTime, QDateTime
 from database import get_sleep_diary_entries, get_earliest_sleep_diary_date, add_sleep_diary_entry, delete_sleep_diary_entry, update_sleep_diary_entry
 from config import calories_burned_red, hover_light_green
+from utils import get_timeframe_dates
 
 
 class SleepDiary(QWidget):
@@ -360,32 +361,7 @@ class SleepDiary(QWidget):
         Returns:
             tuple: (start_qdate, end_qdate)
         """
-        timeframe_str = self.timeframe_selector.currentText()
-
-        end_qdate = QDate.currentDate()
-        earliest_qdate = get_earliest_sleep_diary_date()
-
-        if timeframe_str == "1 Week":
-            start_qdate = end_qdate.addDays(-6)
-        elif timeframe_str == "2 Weeks":
-            start_qdate = end_qdate.addDays(-13)
-        elif timeframe_str == "1 Month":
-            start_qdate = end_qdate.addMonths(-1).addDays(1)
-        elif timeframe_str == "3 Months":
-            start_qdate = end_qdate.addMonths(-3).addDays(1)
-        elif timeframe_str == "1 Year":
-            start_qdate = end_qdate.addYears(-1).addDays(1)
-        elif timeframe_str == "Full History": # First entry in the database to the current date.
-            if earliest_qdate is None:
-                # No entries in database, return empty range
-                start_qdate = end_qdate
-            else:
-                start_qdate = earliest_qdate
-        else:
-            # Default to 1 week if unknown timeframe
-            start_qdate = end_qdate.addDays(-6)
-        
-        return start_qdate, end_qdate
+        return get_timeframe_dates(self.timeframe_selector, get_earliest_sleep_diary_date)
 
     def load_table(self):
         """

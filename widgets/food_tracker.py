@@ -205,31 +205,30 @@ class FoodTracker(QWidget):
         Prompts the user to select a row number, then shows a dialog with the
         current food name and calories pre-filled. Updates the entry in the database.
         """
-        row_count = self.table.rowCount()
-        if row_count == 0:
-            QMessageBox.information(self, "Edit Entry", "There are no entries to edit.")
-            return
+        
+        index = -1;
+        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
 
-        row_number, ok = QInputDialog.getInt(
-            self,
-            "Edit Entry",
-            f"Enter row number to edit (1 - {row_count}):",
-            1, 1, row_count, 1
-        )
-        if not ok:
-            return
+        # If no rows or more than one row selected, prompt user to select a row to edit.
+        if len(selected_rows) != 1:
+            row_count = self.table.rowCount()
+            if row_count == 0:
+                QMessageBox.information(self, "Edit Entry", "There are no entries to edit.")
+                return
 
-        # Get IDs for this date only
-        date_str = self.date_selector.date().toString("yyyy-MM-dd")
-        entries = get_food_entries(date_str)
-
-        index = row_number - 1
-        if index < 0 or index >= len(entries):
-            QMessageBox.warning(self, "Edit Entry", "Invalid row number.")
-            return
-
-        current_food = entries[index][1]
-        current_calories = entries[index][2]
+            row_number, ok = QInputDialog.getInt(
+                self,
+                "Edit Entry",
+                f"Enter row number to edit (1 - {row_count}):",
+                1, 1, row_count, 1
+            )
+            if not ok:
+                return
+            index = row_number - 1
+        else:
+            index = selected_rows[0]
+        
+        row_to_edit = get_food_entries(self.date_selector.date().toString("yyyy-MM-dd"))[index]
 
         # Create edit dialog
         dialog = QDialog(self)
@@ -248,12 +247,12 @@ class FoodTracker(QWidget):
 
         food_input = QLineEdit(dialog)
         food_input.setPlaceholderText("Enter food name")
-        food_input.setText(current_food)
+        food_input.setText(row_to_edit[1])
         input_layout.addRow("Food:", food_input)
 
         calorie_input = QLineEdit(dialog)
         calorie_input.setPlaceholderText("Enter calories")
-        calorie_input.setText(str(current_calories))
+        calorie_input.setText(str(row_to_edit[2]))
         input_layout.addRow("Calories:", calorie_input)
 
         layout.addLayout(input_layout)
@@ -300,7 +299,7 @@ class FoodTracker(QWidget):
             return
 
         # Update the database entry
-        update_food_entry(entries[index][0], food, calories)
+        update_food_entry(row_to_edit[0], food, calories)
         self.load_entries()
 
     def remove_entry(self):

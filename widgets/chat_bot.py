@@ -73,7 +73,7 @@ class ChatBot(QWidget):
         user_message = self.input_field.toPlainText().strip()
         if not user_message:
             return None
-        
+        # I am currently 133kg and 27 years old. I want to lose weight so how much sleep would be reccomended for me per night?
         # Prevent multiple simultaneous requests
         if self.ai_request_in_progress:
             return None

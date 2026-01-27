@@ -263,6 +263,22 @@ def get_exercise_entries(entry_date: str):
     return rows
 
 
+def update_exercise_entry(id: int, activity: str, calories: int):
+    """
+    Update an exercise entry in the database.
+    
+    Args:
+        id (int): The id of the exercise entry to update.
+        activity (str): The activity name.
+        calories (int): The calories burned during the activity.
+    """
+    with use_db("write") as cursor:
+        cursor.execute(
+            "UPDATE exercise SET activity = ?, calories = ? WHERE id = ?",
+            (activity, calories, id),
+        )
+
+
 def delete_exercise_entry(id: int):
     """
     Delete an exercise entry from the database.

@@ -4,11 +4,23 @@ ExerciseTracker widget for the Health App.
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QDateEdit,
-    QAbstractItemView
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QInputDialog,
+    QMessageBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QAbstractItemView,
+    QLineEdit,
 )
-from database import add_exercise, delete_exercise_entry, get_exercise_entries
+from database import add_exercise, delete_exercise_entry, get_exercise_entries, update_exercise_entry
 
 class ExerciseTracker(QWidget):
     """
@@ -50,21 +62,19 @@ class ExerciseTracker(QWidget):
         date_layout.addWidget(self.next_day_button)
 
 
-        # Input section for adding and removing food and calorie entries
-        self.activity_input = QLineEdit()
-        self.activity_input.setPlaceholderText("Enter activity name")
-        self.calorie_input = QLineEdit()
-        self.calorie_input.setPlaceholderText("Enter calories burned")
-
+        # Input buttons for adding, editing and removing exercise entries
         self.add_button = QPushButton("Add Entry")
-        self.remove_button = QPushButton("Remove Entry")
         self.add_button.clicked.connect(self.add_entry)
+
+        self.edit_button = QPushButton("Edit Entry")
+        self.edit_button.clicked.connect(self.edit_entry)
+
+        self.remove_button = QPushButton("Remove Entry")
         self.remove_button.clicked.connect(self.remove_entry)
 
         input_layout = QHBoxLayout()
-        input_layout.addWidget(self.activity_input)
-        input_layout.addWidget(self.calorie_input)
         input_layout.addWidget(self.add_button)
+        input_layout.addWidget(self.edit_button)
         input_layout.addWidget(self.remove_button)
 
        
@@ -103,22 +113,154 @@ class ExerciseTracker(QWidget):
 
     def add_entry(self):
         """
-        Add a new exercise entry to the database.
-        Reads activity name and calories from input fields, validates the calories,
-        and saves the entry for the currently selected date.
+        Show a dialog to create a new exercise entry.
+        Allows the user to enter an activity name and calories burned,
+        then saves the entry to the database for the currently selected date.
         """
-        activity = self.activity_input.text()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Exercise Entry")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("What exercise would you like to track and how many calories did it burn?")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        input_layout = QFormLayout()
+        activity_input = QLineEdit(dialog)
+        activity_input.setPlaceholderText("Enter activity name")
+        input_layout.addRow("Activity:", activity_input)
+
+        calorie_input = QLineEdit(dialog)
+        calorie_input.setPlaceholderText("Enter calories burned")
+        input_layout.addRow("Calories:", calorie_input)
+        layout.addLayout(input_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        ok_button.setText("Add")
+        cancel_button.setText("Cancel")
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        activity = activity_input.text().strip()
+        if not activity:
+            return
+
         try:
-            calories = int(self.calorie_input.text())
+            calories = int(calorie_input.text())
         except ValueError:
-            return  # Ignore if calories is not a number
+            QMessageBox.warning(self, "Add Entry", "Calories must be a whole number.")
+            return
 
         date_str = self.date_selector.date().toString("yyyy-MM-dd")
-
         add_exercise(activity, calories, date_str)
+        self.load_entries()
 
-        self.activity_input.clear()
-        self.calorie_input.clear()
+    def edit_entry(self):
+        """
+        Show a dialog to edit an existing exercise entry.
+        Prompts the user to select a row (via selection or row number),
+        then shows a dialog with the current activity and calories pre-filled.
+        Updates the entry in the database.
+        """
+        index = -1
+        selected_rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
+
+        # If no rows or more than one row selected, prompt user to select a row to edit.
+        if len(selected_rows) != 1:
+            row_count = self.table.rowCount()
+            if row_count == 0:
+                QMessageBox.information(self, "Edit Entry", "There are no entries to edit.")
+                return
+
+            row_number, ok = QInputDialog.getInt(
+                self,
+                "Edit Entry",
+                f"Enter row number to edit (1 - {row_count}):",
+                1,
+                1,
+                row_count,
+                1,
+            )
+            if not ok:
+                return
+            index = row_number - 1
+        else:
+            index = selected_rows[0]
+
+        # Fetch the row to edit from the database for the current date
+        date_str = self.date_selector.date().toString("yyyy-MM-dd")
+        entries = get_exercise_entries(date_str)
+        if index < 0 or index >= len(entries):
+            QMessageBox.warning(self, "Edit Entry", "Invalid row selected.")
+            return
+
+        row_to_edit = entries[index]
+
+        # Create edit dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Exercise Entry")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        message_label = QLabel("Edit the activity name and calories burned:")
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        input_layout = QFormLayout()
+
+        activity_input = QLineEdit(dialog)
+        activity_input.setPlaceholderText("Enter activity name")
+        activity_input.setText(row_to_edit[1])
+        input_layout.addRow("Activity:", activity_input)
+
+        calorie_input = QLineEdit(dialog)
+        calorie_input.setPlaceholderText("Enter calories burned")
+        calorie_input.setText(str(row_to_edit[2]))
+        input_layout.addRow("Calories:", calorie_input)
+
+        layout.addLayout(input_layout)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        ok_button.setText("Save")
+        cancel_button.setText("Cancel")
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        activity = activity_input.text().strip()
+        if not activity:
+            return
+
+        try:
+            calories = int(calorie_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "Edit Entry", "Calories must be a whole number.")
+            return
+
+        # Update the database entry
+        update_exercise_entry(row_to_edit[0], activity, calories)
         self.load_entries()
 
     def remove_entry(self):

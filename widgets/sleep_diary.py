@@ -94,12 +94,36 @@ class SleepDiary(QWidget):
         self.table_layout.addWidget(self.table)
 
         self.stats_layout = QVBoxLayout()
-        self.average_bedtime_label = QLabel("Average Bedtime: --:--")
-        self.average_wakeup_label = QLabel("Average Wakeup: --:--")
-        self.average_sleep_duration_label = QLabel("Average Sleep Duration: --:--")
-        self.stats_layout.addWidget(self.average_bedtime_label)
-        self.stats_layout.addWidget(self.average_wakeup_label)
-        self.stats_layout.addWidget(self.average_sleep_duration_label)
+        # Weekday stats
+        self.weekday_bedtime_label = QLabel("Weekdays - Average Bedtime: --:--")
+        self.weekday_wakeup_label = QLabel("Weekdays - Average Wakeup: --:--")
+        self.weekday_sleep_duration_label = QLabel("Weekdays - Average Sleep Duration: --h --m")
+        # Weekend stats
+        self.weekend_bedtime_label = QLabel("Weekends - Average Bedtime: --:--")
+        self.weekend_wakeup_label = QLabel("Weekends - Average Wakeup: --:--")
+        self.weekend_sleep_duration_label = QLabel("Weekends - Average Sleep Duration: --h --m")
+        # Overall stats
+        self.overall_bedtime_label = QLabel("Overall - Average Bedtime: --:--")
+        self.overall_wakeup_label = QLabel("Overall - Average Wakeup: --:--")
+        self.overall_sleep_duration_label = QLabel("Overall - Average Sleep Duration: --h --m")
+        # Streak and percentage-of-day stats
+        self.sufficient_streak_label = QLabel("Streak since last insufficient night: -- nights")
+        self.percent_of_day_sleep_label = QLabel("Average % of 24h spent sleeping: --%")
+
+        for label in [
+            self.weekday_bedtime_label,
+            self.weekday_wakeup_label,
+            self.weekday_sleep_duration_label,
+            self.weekend_bedtime_label,
+            self.weekend_wakeup_label,
+            self.weekend_sleep_duration_label,
+            self.overall_bedtime_label,
+            self.overall_wakeup_label,
+            self.overall_sleep_duration_label,
+            self.sufficient_streak_label,
+            self.percent_of_day_sleep_label,
+        ]:
+            self.stats_layout.addWidget(label)
 
         self.table_container = QWidget()
         self.table_container.setLayout(self.table_layout)
@@ -406,68 +430,167 @@ class SleepDiary(QWidget):
         """
         start_qdate, end_qdate = self.get_timeframe_dates()
         rows = get_sleep_diary_entries(start_qdate, end_qdate)
-        
+
         if not rows:
-            self.average_bedtime_label.setText("Average Bedtime: --:--")
-            self.average_wakeup_label.setText("Average Wakeup: --:--")
-            self.average_sleep_duration_label.setText("Average Sleep Duration: --:--")
+            self.weekday_bedtime_label.setText("Weekdays - Average Bedtime: --:--")
+            self.weekday_wakeup_label.setText("Weekdays - Average Wakeup: --:--")
+            self.weekday_sleep_duration_label.setText("Weekdays - Average Sleep Duration: --h --m")
+            self.weekend_bedtime_label.setText("Weekends - Average Bedtime: --:--")
+            self.weekend_wakeup_label.setText("Weekends - Average Wakeup: --:--")
+            self.weekend_sleep_duration_label.setText("Weekends - Average Sleep Duration: --h --m")
+            self.overall_bedtime_label.setText("Overall - Average Bedtime: --:--")
+            self.overall_wakeup_label.setText("Overall - Average Wakeup: --:--")
+            self.overall_sleep_duration_label.setText("Overall - Average Sleep Duration: --h --m")
+            self.sufficient_streak_label.setText("Streak since last insufficient night: -- nights")
+            self.percent_of_day_sleep_label.setText("Average % of 24h spent sleeping: --%")
             return
-        
-        # Parse time strings and convert to seconds for averaging
-        # For bedtime: treat early morning times (00:00-06:00) as "next day" (add 24 hours)
-        bedtime_seconds = []
-        wakeup_seconds = []
-        duration_seconds = []
-        
+
+        # Accumulators for weekday, weekend, and overall
+        stats = {
+            "weekday": {"bed": [], "wake": [], "dur": []},
+            "weekend": {"bed": [], "wake": [], "dur": []},
+            "all": {"bed": [], "wake": [], "dur": []},
+        }
+
+        # Helper to add seconds to category lists
+        def add_to_category(cat_key, bedtime_secs, wakeup_secs, duration_secs):
+            if bedtime_secs is not None:
+                stats[cat_key]["bed"].append(bedtime_secs)
+            if wakeup_secs is not None:
+                stats[cat_key]["wake"].append(wakeup_secs)
+            if duration_secs is not None:
+                stats[cat_key]["dur"].append(duration_secs)
+
         for row in rows:
-            # row[2] = bedtime "HH:mm", row[3] = wakeup "HH:mm", row[4] = duration "HH:mm"
+            # row[1] = sleep_date "yyyy-MM-dd", row[2] = bedtime "HH:mm",
+            # row[3] = wakeup "HH:mm", row[4] = duration "HH:mm"
+            date_qdate = QDate.fromString(row[1], "yyyy-MM-dd")
             bedtime_qtime = QTime.fromString(row[2], "HH:mm")
             wakeup_qtime = QTime.fromString(row[3], "HH:mm")
             duration_qtime = QTime.fromString(row[4], "HH:mm")
-            
+
+            bedtime_secs = None
+            wakeup_secs = None
+            duration_secs = None
+
             if bedtime_qtime.isValid():
                 bedtime_secs = bedtime_qtime.hour() * 3600 + bedtime_qtime.minute() * 60
                 # If bedtime is between 00:00-06:00, treat as next day (add 24 hours)
                 if bedtime_qtime.hour() < 6:
                     bedtime_secs += 24 * 3600
-                bedtime_seconds.append(bedtime_secs)
-            
+
             if wakeup_qtime.isValid():
-                wakeup_seconds.append(wakeup_qtime.hour() * 3600 + wakeup_qtime.minute() * 60)
-            
+                wakeup_secs = wakeup_qtime.hour() * 3600 + wakeup_qtime.minute() * 60
+
             if duration_qtime.isValid():
-                duration_seconds.append(duration_qtime.hour() * 3600 + duration_qtime.minute() * 60)
-        
-        # Calculate averages and convert back to QTime
-        if bedtime_seconds:
-            avg_bedtime_secs = sum(bedtime_seconds) / len(bedtime_seconds)
-            # Normalize back to 0-24 hour range
-            avg_bedtime_secs = avg_bedtime_secs % (24 * 3600)
-            avg_bedtime = QTime(0, 0, 0).addSecs(int(avg_bedtime_secs))
-            self.average_bedtime_label.setText(f"Average Bedtime: {avg_bedtime.toString('HH:mm')}")
-        else:
-            self.average_bedtime_label.setText("Average Bedtime: --:--")
-        
-        if wakeup_seconds:
-            avg_wakeup_secs = sum(wakeup_seconds) / len(wakeup_seconds)
-            avg_wakeup = QTime(0, 0, 0).addSecs(int(avg_wakeup_secs))
-            self.average_wakeup_label.setText(f"Average Wakeup: {avg_wakeup.toString('HH:mm')}")
-        else:
-            self.average_wakeup_label.setText("Average Wakeup: --:--")
-        
-        if duration_seconds:
-            avg_duration_secs = sum(duration_seconds) / len(duration_seconds)
-            avg_duration = QTime(0, 0, 0).addSecs(int(avg_duration_secs))
-            hours = avg_duration.hour()
-            minutes = avg_duration.minute()
-            self.average_sleep_duration_label.setText(f"Average Sleep Duration: {hours}h {minutes}m")
-            # Compare using seconds for precise comparison (7-9 hours = 25200-32400 seconds)
-            if avg_duration_secs < self.reccomended_seconds_min_sleep or avg_duration_secs > self.reccomended_seconds_max_sleep:
-                self.average_sleep_duration_label.setStyleSheet(f"color: {calories_burned_red};")
+                duration_secs = duration_qtime.hour() * 3600 + duration_qtime.minute() * 60
+
+            # Determine weekday vs weekend (1=Mon ... 7=Sun)
+            if date_qdate.isValid():
+                if date_qdate.dayOfWeek() in (6, 7):
+                    categories = ["weekend", "all"]
+                else:
+                    categories = ["weekday", "all"]
             else:
-                self.average_sleep_duration_label.setStyleSheet(f"color: {hover_light_green};")
+                categories = ["all"]
+
+            for cat in categories:
+                add_to_category(cat, bedtime_secs, wakeup_secs, duration_secs)
+
+        # Helper to compute average bedtime, wakeup, and duration labels
+        def format_time_from_seconds(avg_secs):
+            avg_secs = avg_secs % (24 * 3600)
+            qtime = QTime(0, 0, 0).addSecs(int(avg_secs))
+            return qtime.toString("HH:mm")
+
+        def format_duration_from_seconds(avg_secs):
+            hours = int(avg_secs // 3600)
+            minutes = int((avg_secs % 3600) // 60)
+            return hours, minutes
+
+        def update_labels_for_category(prefix, data, bedtime_label, wakeup_label, duration_label):
+            if data["bed"]:
+                avg_bed_secs = sum(data["bed"]) / len(data["bed"])
+                bedtime_label.setText(f"{prefix} - Average Bedtime: {format_time_from_seconds(avg_bed_secs)}")
+            else:
+                bedtime_label.setText(f"{prefix} - Average Bedtime: --:--")
+
+            if data["wake"]:
+                avg_wake_secs = sum(data["wake"]) / len(data["wake"])
+                wakeup_label.setText(f"{prefix} - Average Wakeup: {format_time_from_seconds(avg_wake_secs)}")
+            else:
+                wakeup_label.setText(f"{prefix} - Average Wakeup: --:--")
+
+            if data["dur"]:
+                avg_dur_secs = sum(data["dur"]) / len(data["dur"])
+                h, m = format_duration_from_seconds(avg_dur_secs)
+                duration_label.setText(f"{prefix} - Average Sleep Duration: {h}h {m}m")
+            else:
+                duration_label.setText(f"{prefix} - Average Sleep Duration: --h --m")
+
+        # Update weekday, weekend, and overall labels
+        update_labels_for_category(
+            "Weekdays",
+            stats["weekday"],
+            self.weekday_bedtime_label,
+            self.weekday_wakeup_label,
+            self.weekday_sleep_duration_label,
+        )
+        update_labels_for_category(
+            "Weekends",
+            stats["weekend"],
+            self.weekend_bedtime_label,
+            self.weekend_wakeup_label,
+            self.weekend_sleep_duration_label,
+        )
+        update_labels_for_category(
+            "Overall",
+            stats["all"],
+            self.overall_bedtime_label,
+            self.overall_wakeup_label,
+            self.overall_sleep_duration_label,
+        )
+
+        # Highlight overall average duration based on recommended range
+        if stats["all"]["dur"]:
+            avg_overall_dur_secs = sum(stats["all"]["dur"]) / len(stats["all"]["dur"])
+            if (
+                avg_overall_dur_secs < self.reccomended_seconds_min_sleep
+                or avg_overall_dur_secs > self.reccomended_seconds_max_sleep
+            ):
+                self.overall_sleep_duration_label.setStyleSheet(f"color: {calories_burned_red};")
+            else:
+                self.overall_sleep_duration_label.setStyleSheet(f"color: {hover_light_green};")
+
+        # Compute streak since last insufficient night (within this timeframe)
+        streak = 0
+        for row in reversed(rows):
+            duration_qtime = QTime.fromString(row[4], "HH:mm")
+            if not duration_qtime.isValid():
+                break
+            dur_secs = duration_qtime.hour() * 3600 + duration_qtime.minute() * 60
+            if (
+                dur_secs < self.reccomended_seconds_min_sleep
+                or dur_secs > self.reccomended_seconds_max_sleep
+            ):
+                break
+            streak += 1
+        self.sufficient_streak_label.setText(
+            f"Streak since last insufficient night: {streak} night{'s' if streak != 1 else ''}"
+        )
+
+        # Compute % of 24h spent sleeping for the current timeframe
+        total_sleep_secs = sum(stats["all"]["dur"]) if stats["all"]["dur"] else 0
+        nights_with_entries = len(stats["all"]["dur"])
+        if nights_with_entries > 0:
+            # Interpret as average % of a 24h day spent sleeping on nights with entries
+            avg_sleep_secs_per_night = total_sleep_secs / nights_with_entries
+            percent_of_day = (avg_sleep_secs_per_night / (24 * 3600)) * 100
+            self.percent_of_day_sleep_label.setText(
+                f"Average % of 24h spent sleeping: {percent_of_day:.1f}%"
+            )
         else:
-            self.average_sleep_duration_label.setText("Average Sleep Duration: --:--")
+            self.percent_of_day_sleep_label.setText("Average % of 24h spent sleeping: --%")
 
         """
         TODO: Work out recommended sleep duration based on age and sleep duration and show it to the user visually if not achieving it.

@@ -1,9 +1,9 @@
 """
 Graphs widget for the Health App.
 """
-from PyQt6.QtCore import QDate
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QSplitter
 from datetime import datetime, timedelta
 from database import use_db, get_earliest_food_date, get_earliest_sleep_diary_date, get_daily_calorie_goal, get_food_calorie_totals_for_timeframe, get_exercise_calorie_totals_for_timeframe, get_sleep_duration_totals_for_timeframe
 from config import (
@@ -59,28 +59,37 @@ class Graphs(QWidget):
         timeframe_layout.addWidget(self.next_button)
         self.layout.addLayout(timeframe_layout)
 
-        # Matplotlib canvas with two subplots
-        self.canvas = FigureCanvas(Figure(figsize=(6, 6), dpi=100))
-        self.calorie_graph = self.canvas.figure.add_subplot(211)  # Top subplot for calories
-        self.sleep_graph = self.canvas.figure.add_subplot(212)    # Bottom subplot for sleep
+        # Two separate matplotlib canvases (calories, sleep) in a vertical splitter
+        self.calorie_fig = Figure(figsize=(6, 4), dpi=100)
+        self.calorie_canvas = FigureCanvas(self.calorie_fig)
+        self.calorie_graph = self.calorie_fig.add_subplot(111)
 
-        self.layout.addWidget(self.canvas)
+        self.sleep_fig = Figure(figsize=(6, 4), dpi=100)
+        self.sleep_canvas = FigureCanvas(self.sleep_fig)
+        self.sleep_graph = self.sleep_fig.add_subplot(111)
+
+        self.graphs_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.graphs_splitter.addWidget(self.calorie_canvas)
+        self.graphs_splitter.addWidget(self.sleep_canvas)
+        self.layout.addWidget(self.graphs_splitter)
 
         # Ensure canvas/figure/axes respect dark theme colors (Qt stylesheets do not style Matplotlib)
         light_fg = "#ffffff"
         grid_color = "#5a5a5a"
         try:
-            self.canvas.setStyleSheet(f"background-color: {background_dark_gray};")
-            self.canvas.figure.set_facecolor(background_dark_gray)
-            # Apply styling to both graphs
-            for graph in [self.calorie_graph, self.sleep_graph]:
-                graph.set_facecolor(background_dark_gray)
-                for spine in graph.spines.values():
+            for canvas, fig, ax in [
+                (self.calorie_canvas, self.calorie_fig, self.calorie_graph),
+                (self.sleep_canvas, self.sleep_fig, self.sleep_graph),
+            ]:
+                canvas.setStyleSheet(f"background-color: {background_dark_gray};")
+                fig.set_facecolor(background_dark_gray)
+                ax.set_facecolor(background_dark_gray)
+                for spine in ax.spines.values():
                     spine.set_color(grid_color)
-                graph.tick_params(colors=light_fg)
-                graph.title.set_color(light_fg)
-                graph.xaxis.label.set_color(light_fg)
-                graph.yaxis.label.set_color(light_fg)
+                ax.tick_params(colors=light_fg)
+                ax.title.set_color(light_fg)
+                ax.xaxis.label.set_color(light_fg)
+                ax.yaxis.label.set_color(light_fg)
         except Exception:
             pass
 
@@ -279,7 +288,9 @@ class Graphs(QWidget):
             self.sleep_graph.set_xticks([])
             self.sleep_graph.set_yticks([])               
 
-        self.canvas.figure.tight_layout()
-        self.canvas.draw()
+        self.calorie_fig.tight_layout()
+        self.sleep_fig.tight_layout()
+        self.calorie_canvas.draw()
+        self.sleep_canvas.draw()
 
 

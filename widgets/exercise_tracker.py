@@ -19,8 +19,17 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QAbstractItemView,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
 )
-from database import add_exercise, delete_exercise_entry, get_exercise_entries, update_exercise_entry
+from database import (
+    add_exercise,
+    delete_exercise_entry,
+    get_exercise_entries,
+    update_exercise_entry,
+    get_current_weight,
+)
+from met_data import search_met_activities
 
 class ExerciseTracker(QWidget):
     """
@@ -125,7 +134,7 @@ class ExerciseTracker(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        message_label = QLabel("What exercise would you like to track and how many calories did it burn?")
+        message_label = QLabel("What exercise would you like to track and how many calories did it burn? Use the suggest button to see related activites and estimated calories for your current weight.")
         message_label.setWordWrap(True)
         layout.addWidget(message_label)
 
@@ -144,6 +153,10 @@ class ExerciseTracker(QWidget):
         cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
         ok_button.setText("Add")
         cancel_button.setText("Cancel")
+        suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
+        suggest_button.clicked.connect(
+            lambda: self._show_met_suggestions(activity_input, calorie_input)
+        )
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -240,6 +253,10 @@ class ExerciseTracker(QWidget):
         cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
         ok_button.setText("Save")
         cancel_button.setText("Cancel")
+        suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
+        suggest_button.clicked.connect(
+            lambda: self._show_met_suggestions(activity_input, calorie_input)
+        )
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -377,3 +394,84 @@ class ExerciseTracker(QWidget):
 
         self.load_entries()
 
+    def _show_met_suggestions(self, activity_input, calorie_input):
+        """
+        Show activity suggestions from the Compendium MET data.
+        User can search by keyword; picks a suggestion to fill activity and
+        estimated calories (MET × current_weight × 1 hour). If no weight is set
+        in Goals, only activity and MET are shown; user can still pick to fill
+        the activity name.
+        """
+        query = (activity_input.text() or "").strip()
+        if not query:
+            QMessageBox.information(
+                self,
+                "Suggest Activity",
+                "Enter a keyword (e.g. running, cycling, walking) in the Activity field, then click Suggest.",
+            )
+            return
+        matches = search_met_activities(query, limit=15)
+        if not matches:
+            QMessageBox.information(
+                self,
+                "Suggest Activity",
+                "No activities found for that keyword. Try something like 'running', 'walking', or 'cycling'.",
+            )
+            return
+        weight_kg = get_current_weight()
+
+        suggestion_dialog = QDialog(self)
+        suggestion_dialog.setWindowTitle("Activity suggestions")
+        suggestion_dialog.setModal(True)
+        layout = QVBoxLayout()
+        if weight_kg is not None:
+            layout.addWidget(
+                QLabel(f"Estimated calories per hour use your current weight ({weight_kg} kg). Select one to fill the form (1 hour default).")
+            )
+        else:
+            layout.addWidget(
+                QLabel("Set your current weight in the Goals page for calorie estimates. You can still pick an activity to fill the name.")
+            )
+        list_widget = QListWidget()
+        for a in matches:
+            desc = a["description"]
+            met = a["met"]
+            if weight_kg is not None:
+                cal_per_hour = round(met * weight_kg)
+                text = f"{desc} — MET {met} — Est. cal/hour: {cal_per_hour}"
+            else:
+                text = f"{desc} — MET {met}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, a)
+            list_widget.addItem(item)
+        list_widget.itemDoubleClicked.connect(suggestion_dialog.accept)
+        layout.addWidget(list_widget)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        use_btn = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        use_btn.setText("Use selected")
+        button_box.accepted.connect(suggestion_dialog.accept)
+        button_box.rejected.connect(suggestion_dialog.reject)
+        layout.addWidget(button_box)
+        suggestion_dialog.setLayout(layout)
+
+        if suggestion_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        current = list_widget.currentItem()
+        if not current:
+            return
+        a = current.data(Qt.ItemDataRole.UserRole)
+        activity_input.setText(a["description"])
+        if weight_kg is not None:
+            calorie_input.setText(str(round(a["met"] * weight_kg)))
+
+    def get_exercise_list(self):
+        """
+        Get the list of exercises from the Compendium of Physical Activities API.
+        """
+        url = "https://compendium.nm.ciit.gov.ph/api/v1/activities"
+        headers = {
+            "X-RapidAPI-Key": "1234567890",
+            "X-RapidAPI-Host": "compendium.nm.ciit.gov.ph"
+        }
+        response = requests.get(url, headers=headers)
+        return response.json()

@@ -80,12 +80,11 @@ class FoodTracker(QWidget):
         # Disable editing cells by double-clicking as found a user could edit the info locally. While it isnt saved to database its undesirable behaviour.
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         
-        # Enable automatic column resizing to fit content
+        # Split table space evenly between columns
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(0, self.table.horizontalHeader().ResizeMode.Stretch) 
-        self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.ResizeToContents) 
-        self.table.setWordWrap(True) # Enable word wrapping for long food names
-        self.table.setColumnWidth(1, 80) # Set minimum column widths
+        self.table.horizontalHeader().setSectionResizeMode(0, self.table.horizontalHeader().ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, self.table.horizontalHeader().ResizeMode.Stretch)
+        self.table.setWordWrap(True)  # Enable word wrapping for long food names
         
         # Enable keyboard focus and selection
         self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -361,9 +360,6 @@ class FoodTracker(QWidget):
         for i, row in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(row[1]))
             self.table.setItem(i, 1, QTableWidgetItem(str(row[2])))
-
-        # Resize columns to fit content after loading data
-        self.table.resizeColumnsToContents()
 
         # Update total calories label
         total_calories = sum(row[2] for row in rows) if rows else 0

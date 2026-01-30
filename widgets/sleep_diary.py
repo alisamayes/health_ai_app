@@ -93,7 +93,10 @@ class SleepDiary(QWidget):
         self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
         self.table_layout.addWidget(self.table)
 
-        self.stats_layout = QVBoxLayout()
+        self.stats_layout = QHBoxLayout()
+        self.stat_1_layout = QVBoxLayout()
+        self.stat_2_layout = QVBoxLayout()
+
         # Weekday stats
         self.weekday_bedtime_label = QLabel("Weekdays - Average Bedtime: --:--")
         self.weekday_wakeup_label = QLabel("Weekdays - Average Wakeup: --:--")
@@ -102,14 +105,6 @@ class SleepDiary(QWidget):
         self.weekend_bedtime_label = QLabel("Weekends - Average Bedtime: --:--")
         self.weekend_wakeup_label = QLabel("Weekends - Average Wakeup: --:--")
         self.weekend_sleep_duration_label = QLabel("Weekends - Average Sleep Duration: --h --m")
-        # Overall stats
-        self.overall_bedtime_label = QLabel("Overall - Average Bedtime: --:--")
-        self.overall_wakeup_label = QLabel("Overall - Average Wakeup: --:--")
-        self.overall_sleep_duration_label = QLabel("Overall - Average Sleep Duration: --h --m")
-        # Streak and percentage-of-day stats
-        self.sufficient_streak_label = QLabel("Streak since last insufficient night: -- nights")
-        self.percent_of_day_sleep_label = QLabel("Average % of 24h spent sleeping: --%")
-
         for label in [
             self.weekday_bedtime_label,
             self.weekday_wakeup_label,
@@ -117,13 +112,27 @@ class SleepDiary(QWidget):
             self.weekend_bedtime_label,
             self.weekend_wakeup_label,
             self.weekend_sleep_duration_label,
+        ]:
+            self.stat_1_layout.addWidget(label)
+            
+        # Overall stats
+        self.overall_bedtime_label = QLabel("Overall - Average Bedtime: --:--")
+        self.overall_wakeup_label = QLabel("Overall - Average Wakeup: --:--")
+        self.overall_sleep_duration_label = QLabel("Overall - Average Sleep Duration: --h --m")
+        # Streak and percentage-of-day stats
+        self.sufficient_streak_label = QLabel("Streak since last insufficient night: -- nights")
+        self.percent_of_day_sleep_label = QLabel("Average % of 24h spent sleeping: --%")
+        for label in [
             self.overall_bedtime_label,
             self.overall_wakeup_label,
             self.overall_sleep_duration_label,
             self.sufficient_streak_label,
             self.percent_of_day_sleep_label,
         ]:
-            self.stats_layout.addWidget(label)
+            self.stat_2_layout.addWidget(label)
+
+        self.stats_layout.addLayout(self.stat_1_layout)
+        self.stats_layout.addLayout(self.stat_2_layout)
 
         self.table_container = QWidget()
         self.table_container.setLayout(self.table_layout)
@@ -443,6 +452,12 @@ class SleepDiary(QWidget):
             self.overall_sleep_duration_label.setText("Overall - Average Sleep Duration: --h --m")
             self.sufficient_streak_label.setText("Streak since last insufficient night: -- nights")
             self.percent_of_day_sleep_label.setText("Average % of 24h spent sleeping: --%")
+            for lbl in (
+                self.weekday_sleep_duration_label,
+                self.weekend_sleep_duration_label,
+                self.overall_sleep_duration_label,
+            ):
+                lbl.setStyleSheet("")
             return
 
         # Accumulators for weekday, weekend, and overall
@@ -551,16 +566,26 @@ class SleepDiary(QWidget):
             self.overall_sleep_duration_label,
         )
 
-        # Highlight overall average duration based on recommended range
-        if stats["all"]["dur"]:
-            avg_overall_dur_secs = sum(stats["all"]["dur"]) / len(stats["all"]["dur"])
+        def style_duration_label(label, avg_dur_secs):
+            """Apply red/green highlight to average sleep duration label based on 7–9h range."""
+            if avg_dur_secs is None:
+                label.setStyleSheet("")
+                return
             if (
-                avg_overall_dur_secs < self.reccomended_seconds_min_sleep
-                or avg_overall_dur_secs > self.reccomended_seconds_max_sleep
+                avg_dur_secs < self.reccomended_seconds_min_sleep
+                or avg_dur_secs > self.reccomended_seconds_max_sleep
             ):
-                self.overall_sleep_duration_label.setStyleSheet(f"color: {calories_burned_red};")
+                label.setStyleSheet(f"color: {calories_burned_red};")
             else:
-                self.overall_sleep_duration_label.setStyleSheet(f"color: {hover_light_green};")
+                label.setStyleSheet(f"color: {hover_light_green};")
+
+        avg_weekday = sum(stats["weekday"]["dur"]) / len(stats["weekday"]["dur"]) if stats["weekday"]["dur"] else None
+        avg_weekend = sum(stats["weekend"]["dur"]) / len(stats["weekend"]["dur"]) if stats["weekend"]["dur"] else None
+        avg_overall = sum(stats["all"]["dur"]) / len(stats["all"]["dur"]) if stats["all"]["dur"] else None
+
+        style_duration_label(self.weekday_sleep_duration_label, avg_weekday)
+        style_duration_label(self.weekend_sleep_duration_label, avg_weekend)
+        style_duration_label(self.overall_sleep_duration_label, avg_overall)
 
         # Compute streak since last insufficient night (within this timeframe)
         streak = 0

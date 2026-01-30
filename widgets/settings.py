@@ -9,6 +9,7 @@ from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QCheckBox, QPushButton, QFileDialog, QMessageBox
 )
+from database import get_db_path
 
 class Settings(QWidget):
     """
@@ -43,7 +44,10 @@ class Settings(QWidget):
         # Button to allow user to import a database to use for the app
         self.import_database_button = QPushButton("Import Database")
         self.import_database_button.clicked.connect(self.import_database)
-        
+        # Button to allow user to export the current database (e.g. for .exe users)
+        self.export_database_button = QPushButton("Export Database")
+        self.export_database_button.clicked.connect(self.export_database)
+
         # Connect checkbox state changes to save settings (except startup which is handled separately)
         self.food_ai_checkbox.stateChanged.connect(self.save_settings)
         self.exercise_ai_checkbox.stateChanged.connect(self.save_settings)
@@ -58,6 +62,7 @@ class Settings(QWidget):
         self.layout.addWidget(self.silent_notif_checkbox)
         self.layout.addWidget(self.desktop_notif)
         self.layout.addWidget(self.import_database_button)
+        self.layout.addWidget(self.export_database_button)
 
         # Load saved settings
         self.load_settings()
@@ -197,5 +202,38 @@ class Settings(QWidget):
                     self,
                     "Import Error",
                     f"Failed to import database:\n{str(e)}"
+                )
+
+    def export_database(self):
+        """
+        Allow the user to export the current database to a file of their choice.
+        Useful when running the .exe variant, where the database lives in a temp
+        or app directory and is not easily accessible for backup or migration.
+        """
+        db_path = get_db_path()
+        if not os.path.exists(db_path):
+            QMessageBox.warning(
+                self,
+                "Export Error",
+                "No database file found to export."
+            )
+            return
+        default_name = f"health_app_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Database", default_name, "Database Files (*.db)"
+        )
+        if file_path:
+            try:
+                shutil.copy(db_path, file_path)
+                QMessageBox.information(
+                    self,
+                    "Database Exported",
+                    f"Database exported successfully to:\n{file_path}"
+                )
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Export Error",
+                    f"Failed to export database:\n{str(e)}"
                 )
 

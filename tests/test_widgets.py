@@ -8,7 +8,7 @@ from widgets.food_tracker import FoodTracker
 from widgets.exercise_tracker import ExerciseTracker
 from widgets.goals import Goals
 from widgets.sleep_diary import SleepDiary
-from database import add_food, add_sleep_diary_entry
+from database import add_food, add_sleep_diary_entry, add_exercise
 
 
 @pytest.mark.gui
@@ -44,6 +44,26 @@ class TestFoodTracker:
         calories = widget.suggest_calories_locally("Banana")
         assert calories == 100
 
+    def test_food_tracker_load_entries(self, qtbot):
+        """Test loading entries from database."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        add_food("Test Food", 150, today)
+        widget = FoodTracker()
+        qtbot.addWidget(widget)
+        assert widget.table.rowCount() >= 1
+        assert any(widget.table.item(i, 0).text() == "Test Food" for i in range(widget.table.rowCount()))
+
+    def test_food_tracker_date_navigation(self, qtbot):
+        """Test back/next day buttons."""
+        widget = FoodTracker()
+        qtbot.addWidget(widget)
+        initial_date = widget.date_selector.date()
+        qtbot.mouseClick(widget.back_day_button, Qt.MouseButton.LeftButton)
+        assert widget.date_selector.date() < initial_date
+        qtbot.mouseClick(widget.next_day_button, Qt.MouseButton.LeftButton)
+        assert widget.date_selector.date() == initial_date
+
 
 @pytest.mark.gui
 class TestExerciseTracker:
@@ -57,6 +77,26 @@ class TestExerciseTracker:
         assert widget.table is not None
         assert widget.date_selector is not None
         assert widget.add_button is not None
+
+    def test_exercise_tracker_load_entries(self, qtbot):
+        """Test loading entries from database."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        add_exercise("Running", 300, today)
+        widget = ExerciseTracker()
+        qtbot.addWidget(widget)
+        assert widget.table.rowCount() >= 1
+        assert any(widget.table.item(i, 0).text() == "Running" for i in range(widget.table.rowCount()))
+
+    def test_exercise_tracker_date_navigation(self, qtbot):
+        """Test back/next day buttons."""
+        widget = ExerciseTracker()
+        qtbot.addWidget(widget)
+        initial_date = widget.date_selector.date()
+        qtbot.mouseClick(widget.back_day_button, Qt.MouseButton.LeftButton)
+        assert widget.date_selector.date() < initial_date
+        qtbot.mouseClick(widget.next_day_button, Qt.MouseButton.LeftButton)
+        assert widget.date_selector.date() == initial_date
 
 
 @pytest.mark.gui
@@ -89,9 +129,18 @@ class TestSleepDiary:
         assert widget.edit_button is not None
         assert widget.back_button is not None
         assert widget.next_button is not None
-        assert widget.average_bedtime_label is not None
-        assert widget.average_wakeup_label is not None
-        assert widget.average_sleep_duration_label is not None
+        # Stats labels for weekdays, weekends, overall, streak and percentage
+        assert widget.weekday_bedtime_label is not None
+        assert widget.weekday_wakeup_label is not None
+        assert widget.weekday_sleep_duration_label is not None
+        assert widget.weekend_bedtime_label is not None
+        assert widget.weekend_wakeup_label is not None
+        assert widget.weekend_sleep_duration_label is not None
+        assert widget.overall_bedtime_label is not None
+        assert widget.overall_wakeup_label is not None
+        assert widget.overall_sleep_duration_label is not None
+        assert widget.sufficient_streak_label is not None
+        assert widget.percent_of_day_sleep_label is not None
     
     def test_timeframe_selector_options(self, qtbot):
         """Test that timeframe selector has correct options."""
@@ -209,10 +258,18 @@ class TestSleepDiary:
         widget = SleepDiary()
         qtbot.addWidget(widget)
         
-        # Check initial state (may show --:-- if no entries)
-        assert widget.average_bedtime_label is not None
-        assert widget.average_wakeup_label is not None
-        assert widget.average_sleep_duration_label is not None
+        # With no entries, stats should show placeholder values
+        assert widget.weekday_bedtime_label.text() == "Weekdays - Average Bedtime: --:--"
+        assert widget.weekday_wakeup_label.text() == "Weekdays - Average Wakeup: --:--"
+        assert widget.weekday_sleep_duration_label.text() == "Weekdays - Average Sleep Duration: --h --m"
+        assert widget.weekend_bedtime_label.text() == "Weekends - Average Bedtime: --:--"
+        assert widget.weekend_wakeup_label.text() == "Weekends - Average Wakeup: --:--"
+        assert widget.weekend_sleep_duration_label.text() == "Weekends - Average Sleep Duration: --h --m"
+        assert widget.overall_bedtime_label.text() == "Overall - Average Bedtime: --:--"
+        assert widget.overall_wakeup_label.text() == "Overall - Average Wakeup: --:--"
+        assert widget.overall_sleep_duration_label.text() == "Overall - Average Sleep Duration: --h --m"
+        assert widget.sufficient_streak_label.text() == "Streak since last insufficient night: -- nights"
+        assert widget.percent_of_day_sleep_label.text() == "Average % of 24h spent sleeping: --%"
     
     def test_table_column_count(self, qtbot):
         """Test that table has correct number of columns."""
@@ -255,3 +312,66 @@ class TestSleepDiary:
         
         assert widget.edit_button is not None
         assert widget.edit_button.text() == "Edit Entry"
+
+    def test_stats_with_weekday_and_weekend_entries(self, qtbot):
+        """Test that stats labels update correctly for weekday, weekend, streak and % of day."""
+        widget = SleepDiary()
+        qtbot.addWidget(widget)
+
+        # Use "Full History" timeframe so all added entries are included
+        full_history_index = None
+        for i in range(widget.timeframe_selector.count()):
+            if widget.timeframe_selector.itemText(i) == "Full History":
+                full_history_index = i
+                break
+        if full_history_index is not None:
+            widget.timeframe_selector.setCurrentIndex(full_history_index)
+
+        # Create one weekday night with 8h sleep (within recommended range)
+        today = QDate.currentDate()
+        # Find most recent weekday (Mon–Fri) on or before today
+        weekday_date = today
+        while weekday_date.dayOfWeek() in (6, 7):
+            weekday_date = weekday_date.addDays(-1)
+
+        weekday_bedtime = QDateTime(weekday_date, QTime(23, 0))
+        weekday_wakeup = QDateTime(weekday_date.addDays(1), QTime(7, 0))
+        weekday_duration = QTime(8, 0)  # 8 hours, sufficient
+        add_sleep_diary_entry(weekday_date, weekday_bedtime, weekday_wakeup, weekday_duration)
+
+        # Create one weekend night with 6h sleep (insufficient)
+        weekend_date = today
+        # Find most recent weekend (Sat/Sun) on or before today
+        while weekend_date.dayOfWeek() not in (6, 7):
+            weekend_date = weekend_date.addDays(-1)
+
+        weekend_bedtime = QDateTime(weekend_date, QTime(23, 0))
+        weekend_wakeup = QDateTime(weekend_date.addDays(1), QTime(5, 0))
+        weekend_duration = QTime(6, 0)  # 6 hours, insufficient
+        add_sleep_diary_entry(weekend_date, weekend_bedtime, weekend_wakeup, weekend_duration)
+
+        # Reload table and stats
+        widget.load_table()
+
+        # Weekday stats: bedtime / wakeup should be concrete times, duration 8h 0m
+        assert "Weekdays - Average Bedtime:" in widget.weekday_bedtime_label.text()
+        assert "Weekdays - Average Wakeup:" in widget.weekday_wakeup_label.text()
+        assert "Weekdays - Average Sleep Duration: 8h 0m" in widget.weekday_sleep_duration_label.text()
+
+        # Weekend stats: duration 6h 0m
+        assert "Weekends - Average Sleep Duration: 6h 0m" in widget.weekend_sleep_duration_label.text()
+
+        # Overall duration is average of 8h and 6h => 7h
+        assert "Overall - Average Sleep Duration: 7h 0m" in widget.overall_sleep_duration_label.text()
+
+        # Streak since last insufficient night should be 1 because the most recent
+        # entry in this timeframe is sufficient (8h) and the previous one is insufficient
+        assert widget.sufficient_streak_label.text().startswith(
+            "Streak since last insufficient night: 1 night"
+        )
+
+        # Percentage of day spent sleeping should be ~29.2% for 7h average
+        assert widget.percent_of_day_sleep_label.text().startswith(
+            "Average % of 24h spent sleeping: "
+        )
+        assert "29.2%" in widget.percent_of_day_sleep_label.text()

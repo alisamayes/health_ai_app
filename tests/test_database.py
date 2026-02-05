@@ -5,12 +5,15 @@ import pytest
 from database import (
     add_food, get_food_entries, update_food_entry, delete_food_entry, get_all_distinct_foods,
     get_most_common_foods, get_earliest_food_date, get_food_calorie_totals_for_timeframe,
-    add_exercise, get_exercise_entries, delete_exercise_entry,
+    add_exercise, get_exercise_entries, delete_exercise_entry, update_exercise_entry,
+    get_exercise_calorie_totals_for_timeframe,
     add_weight, get_current_weight, get_target_weight, get_all_currnet_weight_entries,
     add_weight_loss_timeframe, get_weight_loss_timeframe,
     add_daily_calorie_goal, get_daily_calorie_goal,
+    check_weekly_weight_entry, delete_weight_entry, update_weight_entry,
     add_pantry_item, get_pantry_items, clear_pantry, delete_pantry_items,
     add_shopping_list_item, get_shopping_list_items, clear_shopping_list, delete_shopping_list_items,
+    clean_shopping_list_formatting,
     create_meal_plan_row, get_meal_plan_for_day, update_meal_plan_for_day,
     add_sleep_diary_entry, get_sleep_diary_entries, delete_sleep_diary_entry,
     update_sleep_diary_entry, get_earliest_sleep_diary_date, get_sleep_duration_totals_for_timeframe
@@ -98,6 +101,38 @@ class TestExerciseOperations:
         delete_exercise_entry(entry_id)
         remaining_entries = get_exercise_entries("2024-01-01")
         assert not any(e[0] == entry_id for e in remaining_entries)
+
+    def test_get_exercise_entries_empty_date(self):
+        """Test getting entries for date with no entries."""
+        entries = get_exercise_entries("2024-12-31")
+        assert entries == []
+
+    def test_get_exercise_entries_multiple_dates(self):
+        """Test date isolation for exercise entries."""
+        add_exercise("Monday Run", 300, "2024-01-01")
+        add_exercise("Tuesday Swim", 400, "2024-01-02")
+        monday_entries = get_exercise_entries("2024-01-01")
+        tuesday_entries = get_exercise_entries("2024-01-02")
+        assert any(e[1] == "Monday Run" for e in monday_entries)
+        assert not any(e[1] == "Tuesday Swim" for e in monday_entries)
+        assert any(e[1] == "Tuesday Swim" for e in tuesday_entries)
+
+    def test_update_exercise_entry(self):
+        """Test updating an exercise entry."""
+        add_exercise("Running", 300, "2024-01-01")
+        entries = get_exercise_entries("2024-01-01")
+        entry_id = entries[0][0]
+        update_exercise_entry(entry_id, "Jogging", 250)
+        updated = get_exercise_entries("2024-01-01")
+        updated_entry = next(e for e in updated if e[0] == entry_id)
+        assert updated_entry[1] == "Jogging"
+        assert updated_entry[2] == 250
+
+    def test_add_exercise_zero_calories(self):
+        """Test adding exercise with 0 calories."""
+        add_exercise("Stretching", 0, "2024-01-01")
+        entries = get_exercise_entries("2024-01-01")
+        assert any(e[1] == "Stretching" and e[2] == 0 for e in entries)
 
 
 @pytest.mark.unit
@@ -201,6 +236,23 @@ class TestMealPlanOperations:
         assert get_meal_plan_for_day("Tuesday") == food
         assert get_meal_plan_for_day("Monday") == ""
 
+    def test_get_meal_plan_for_day_all_days(self):
+        """Test all 7 days individually - update and read each."""
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        for day in days:
+            update_meal_plan_for_day(day, f"Meal for {day}")
+        for day in days:
+            assert get_meal_plan_for_day(day) == f"Meal for {day}"
+
+    def test_create_meal_plan_row_idempotent(self):
+        """Test calling create_meal_plan_row multiple times (should not create duplicates)."""
+        create_meal_plan_row()
+        create_meal_plan_row()
+        create_meal_plan_row()
+        # Should still have exactly one row - verify by updating and reading
+        update_meal_plan_for_day("Monday", "Test")
+        assert get_meal_plan_for_day("Monday") == "Test"
+
 
 @pytest.mark.unit
 class TestFoodOperationsEdgeCases:
@@ -241,6 +293,48 @@ class TestFoodOperationsEdgeCases:
         assert food_names[0] == "Apple"
         # Should return up to 5 items
         assert len(common_foods) <= 5
+
+    def test_get_most_common_foods_with_duplicates(self):
+        """Test that duplicate food names are grouped correctly (averages calories)."""
+        add_food("Apple", 90, "2024-01-01")
+        add_food("Apple", 100, "2024-01-02")
+        add_food("apple", 95, "2024-01-03")  # Different case - groups by UPPER()
+        common_foods = get_most_common_foods()
+        apple_entry = next((f for f in common_foods if f[0].lower() == "apple"), None)
+        assert apple_entry is not None
+        # Should average to one of the values (exact depends on grouping)
+        assert 80 <= apple_entry[1] <= 110
+
+    def test_update_food_entry_nonexistent_id(self):
+        """Test updating a non-existent entry (should not crash)."""
+        update_food_entry(99999, "Ghost Food", 100)
+        # No exception raised - verify no side effects
+        entries = get_food_entries("2024-01-01")
+        assert not any(e[1] == "Ghost Food" for e in entries)
+
+    def test_delete_food_entry_nonexistent_id(self):
+        """Test deleting a non-existent entry (should not crash)."""
+        delete_food_entry(99999)
+        # No exception raised
+
+    def test_get_all_distinct_foods_empty_database(self):
+        """Test with empty database (should return empty list)."""
+        foods = get_all_distinct_foods()
+        assert foods == []
+
+    def test_add_food_zero_calories(self):
+        """Test adding food with 0 calories."""
+        add_food("Zero Cal Food", 0, "2024-01-01")
+        entries = get_food_entries("2024-01-01")
+        assert any(e[1] == "Zero Cal Food" and e[2] == 0 for e in entries)
+
+    def test_unicode_characters(self):
+        """Test with unicode/special characters in food names."""
+        add_food("Café au lait", 120, "2024-01-01")
+        add_food("Sushi 寿司", 350, "2024-01-01")
+        entries = get_food_entries("2024-01-01")
+        assert any(e[1] == "Café au lait" for e in entries)
+        assert any(e[1] == "Sushi 寿司" for e in entries)
 
 
 @pytest.mark.unit
@@ -289,6 +383,44 @@ class TestGoalsOperationsEdgeCases:
         assert 71.0 in weights
         assert 72.0 in weights
 
+    def test_check_weekly_weight_entry(self):
+        """Test weekly weight entry check."""
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        week_start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+        week_end = (today - timedelta(days=today.weekday()) + timedelta(days=6)).strftime("%Y-%m-%d")
+        add_weight(75.0, today.strftime("%Y-%m-%d"), "current")
+        weight = check_weekly_weight_entry(week_start, week_end)
+        assert weight == 75.0
+
+    def test_check_weekly_weight_entry_no_entry(self):
+        """Test when no entry exists for week."""
+        weight = check_weekly_weight_entry("2020-01-06", "2020-01-12")
+        assert weight is None
+
+    def test_delete_weight_entry(self):
+        """Test deleting a weight entry."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        add_weight(80.0, today, "current")
+        entries = get_all_currnet_weight_entries()
+        entry_id = entries[-1][0]
+        delete_weight_entry(entry_id)
+        remaining = get_all_currnet_weight_entries()
+        assert not any(e[0] == entry_id for e in remaining)
+
+    def test_update_weight_entry(self):
+        """Test updating a weight entry."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        add_weight(70.0, today, "current")
+        entries = get_all_currnet_weight_entries()
+        entry_id = entries[-1][0]
+        update_weight_entry(entry_id, 69.5, today)
+        updated = get_all_currnet_weight_entries()
+        updated_entry = next(e for e in updated if e[0] == entry_id)
+        assert updated_entry[1] == 69.5
+
 
 @pytest.mark.unit
 class TestPantryOperationsEdgeCases:
@@ -327,6 +459,20 @@ class TestPantryOperationsEdgeCases:
         items = get_pantry_items()
         assert items == []
 
+    def test_add_pantry_item_duplicate(self):
+        """Test adding duplicate item (should be allowed - creates separate entry)."""
+        add_pantry_item("Flour", 500)
+        add_pantry_item("Flour", 250)
+        items = get_pantry_items()
+        flour_items = [i for i in items if i[1] == "Flour"]
+        assert len(flour_items) == 2
+
+    def test_add_pantry_item_zero_weight(self):
+        """Test adding item with 0 weight."""
+        add_pantry_item("Empty Jar", 0)
+        items = get_pantry_items()
+        assert any(i[1] == "Empty Jar" and i[2] == 0 for i in items)
+
 
 @pytest.mark.unit
 class TestShoppingListOperationsEdgeCases:
@@ -363,6 +509,26 @@ class TestShoppingListOperationsEdgeCases:
         clear_shopping_list()
         items = get_shopping_list_items()
         assert items == []
+
+    def test_add_shopping_list_item_duplicate(self):
+        """Test duplicate items (should be allowed - creates separate entry)."""
+        add_shopping_list_item("Milk")
+        add_shopping_list_item("Milk")
+        items = get_shopping_list_items()
+        milk_items = [i for i in items if i[1] == "Milk"]
+        assert len(milk_items) == 2
+
+    def test_clean_shopping_list_formatting(self):
+        """Test the cleanup function for formatting."""
+        add_shopping_list_item("Valid Item")
+        add_shopping_list_item("- Markdown Item")
+        add_shopping_list_item("# Header")
+        clean_shopping_list_formatting()
+        items = get_shopping_list_items()
+        names = [i[1] for i in items]
+        assert "Valid Item" in names
+        assert "Markdown Item" in names  # "- " prefix stripped
+        assert "# Header" not in names  # Invalid items deleted
 
 
 @pytest.mark.unit
@@ -405,6 +571,29 @@ class TestTimeframeOperations:
         assert len(totals) >= 3
         total_calories = sum(cal for date, cal in totals)
         assert total_calories == 450  # 100 + 200 + 150
+
+    def test_get_food_calorie_totals_for_timeframe_empty(self):
+        """Test with no entries in range."""
+        totals = get_food_calorie_totals_for_timeframe("2020-01-01", "2020-01-07")
+        assert totals == []
+
+    def test_get_exercise_calorie_totals_for_timeframe(self):
+        """Test exercise calorie totals for date range."""
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        start = (today - timedelta(days=5)).strftime("%Y-%m-%d")
+        end = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        add_exercise("Run", 300, start)
+        add_exercise("Swim", 400, end)
+        totals = get_exercise_calorie_totals_for_timeframe(start, end)
+        assert len(totals) >= 2
+        total_cals = sum(cal for _, cal in totals)
+        assert total_cals >= 700
+
+    def test_get_exercise_calorie_totals_for_timeframe_empty(self):
+        """Test with no exercise entries in range."""
+        totals = get_exercise_calorie_totals_for_timeframe("2020-01-01", "2020-01-07")
+        assert totals == []
 
 
 @pytest.mark.unit

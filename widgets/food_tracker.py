@@ -4,9 +4,23 @@ FoodTracker widget for the Health App.
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QInputDialog, QMessageBox, QDateEdit,
-    QDialog, QDialogButtonBox, QFormLayout, QAbstractItemView
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QInputDialog,
+    QMessageBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QAbstractItemView,
+    QListWidget,
+    QListWidgetItem,
 )
 import os
 import requests
@@ -120,19 +134,6 @@ class FoodTracker(QWidget):
         dialog.setWindowTitle("Add Food Entry")
         dialog.setModal(True)
 
-        def handle_suggest(food_input, calorie_input):
-            """Handle suggest button click by looking up calories for the food."""
-            food_text = food_input.text().strip()
-            if not food_text:
-                QMessageBox.warning(dialog, "Suggest Calories", "Enter a food name to get a suggestion.")
-                return
-
-            calories = self.suggest_calories_locally(food_text)
-            if calories is None:
-                QMessageBox.warning(dialog, "Suggest Calories", "No calories found for the food.")
-            else:
-                calorie_input.setText(str(calories))
-
         def handle_quickadd(food_name, food_calories):
             """Handle quick-add button click by filling in the food and calorie inputs."""
             food_input.setText(food_name)
@@ -161,7 +162,9 @@ class FoodTracker(QWidget):
         add_button.setText("Add")
         cancel_button.setText("Cancel")
         suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
-        suggest_button.clicked.connect(lambda: handle_suggest(food_input, calorie_input))
+        suggest_button.clicked.connect(
+            lambda: self._show_food_suggestions(food_input, calorie_input, dialog)
+        )
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -256,19 +259,6 @@ class FoodTracker(QWidget):
 
         layout.addLayout(input_layout)
 
-        def handle_suggest():
-            """Handle the suggest button click by looking up calories for the food."""
-            food_text = food_input.text().strip()
-            if not food_text:
-                QMessageBox.warning(dialog, "Suggest Calories", "Enter a food name to get a suggestion.")
-                return
-
-            calories = self.suggest_calories_locally(food_text)
-            if calories is None:
-                QMessageBox.warning(dialog, "Suggest Calories", "No calories found for the food.")
-            else:
-                calorie_input.setText(str(calories))
-
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
         cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
@@ -276,8 +266,9 @@ class FoodTracker(QWidget):
         cancel_button.setText("Cancel")
 
         suggest_button = button_box.addButton("Suggest", QDialogButtonBox.ButtonRole.ActionRole)
-
-        suggest_button.clicked.connect(handle_suggest)
+        suggest_button.clicked.connect(
+            lambda: self._show_food_suggestions(food_input, calorie_input, dialog)
+        )
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
@@ -461,6 +452,106 @@ class FoodTracker(QWidget):
         calories = [food[1] for food in foods if food[0] == matches[0]]
         average_calories = sum(calories) / len(calories)
         return int(round(average_calories))
+
+    def _show_food_suggestions(self, food_input, calorie_input, parent_dialog):
+        """
+        Show food suggestions based on local database (and USDA fallback).
+        Lets the user pick a suggestion to fill in the food name and calories,
+        similar to the exercise suggestions UI.
+        """
+        query = (food_input.text() or "").strip()
+        if not query:
+            QMessageBox.information(
+                parent_dialog,
+                "Suggest Food",
+                "Enter a food name first, then click Suggest.",
+            )
+            return
+
+        # Build a mapping of unique, normalized food names to all their calorie values
+        foods = get_all_distinct_foods()
+        suggested_foods = {}
+        for name, cals in foods:
+            if not name:
+                continue
+            clean_name = name.strip()
+            if not clean_name:
+                continue
+            suggested_foods.setdefault(clean_name, []).append(cals)
+
+        all_names = list(suggested_foods.keys())
+        matches = get_close_matches(query, all_names, n=10, cutoff=0.6)
+
+        suggestions = []
+        for name in matches:
+            cals = suggested_foods.get(name, [])
+            if not cals:
+                continue
+            avg_cals = int(round(sum(cals) / len(cals)))
+            suggestions.append(
+                {"name": name, "calories": avg_cals, "source": "Local"}
+            )
+
+        # If no local matches, fall back to USDA (single suggestion)
+        if not suggestions:
+            usda_cals = self.suggest_calories_from_usda(query)
+            if usda_cals is None:
+                QMessageBox.information(
+                    parent_dialog,
+                    "Suggest Food",
+                    "No matching foods found locally or from USDA.",
+                )
+                return
+            suggestions.append(
+                {
+                    "name": query,
+                    "calories": int(usda_cals),
+                    "source": "USDA",
+                }
+            )
+
+        suggestion_dialog = QDialog(parent_dialog)
+        suggestion_dialog.setWindowTitle("Food suggestions")
+        suggestion_dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        layout.addWidget(
+            QLabel(
+                "Select a food to fill the form. Calories are per entry estimate."
+            )
+        )
+
+        list_widget = QListWidget()
+        for s in suggestions:
+            text = f"{s['name']} — {s['calories']} kcal ({s['source']})"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, s)
+            list_widget.addItem(item)
+        list_widget.itemDoubleClicked.connect(suggestion_dialog.accept)
+        layout.addWidget(list_widget)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        use_btn = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        use_btn.setText("Use selected")
+        button_box.accepted.connect(suggestion_dialog.accept)
+        button_box.rejected.connect(suggestion_dialog.reject)
+        layout.addWidget(button_box)
+
+        suggestion_dialog.setLayout(layout)
+
+        if suggestion_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        current = list_widget.currentItem()
+        if not current:
+            return
+
+        data = current.data(Qt.ItemDataRole.UserRole)
+        food_input.setText(data["name"])
+        calorie_input.setText(str(data["calories"]))
 
     def suggest_calories_from_usda(self, user_input):
         """
